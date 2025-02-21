@@ -1,0 +1,121 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  uid                      String    @id @default(uuid())
+  names                    String
+
+  auth                     String
+
+  expo_push_token          String?
+  device_push_token        String?
+
+  notifyOnListShared       Boolean   @default(true)
+  notifyOnListItemsUpdate  Boolean   @default(true)
+  notifyOnItemStateUpdate  Boolean   @default(true)
+
+  deleted                  Boolean   @default(false)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  lists                    UserList[]
+  assignations             ListItem[]
+}
+
+model List {
+  listId                   String    @id @default(uuid())
+  shareId                  String    @default(uuid())
+  name                     String
+  type                     String    @default("project")
+
+  deadline                 DateTime?
+
+  active                   Boolean   @default(true)
+  completed                Boolean   @default(false)
+  completedAt              DateTime?
+  hideCompleted            Boolean   @default(false)
+
+  notifyOnListShared       Boolean   @default(true)
+  notifyOnListItemsUpdate  Boolean   @default(true)
+  notifyOnItemStateUpdate  Boolean   @default(true)
+
+  deleted                  Boolean   @default(false)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  users                    UserList[]
+  listItems                ListItem[]
+}
+
+model Item {
+  itemId                   String    @id @default(uuid())
+  name                     String
+  type                     String    @default("task")
+  units                    String?
+
+  active                   Boolean   @default(true)
+  public                   Boolean   @default(false)
+
+  deleted                  Boolean   @default(false)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  listItems                ListItem[]
+}
+
+model UserList {
+  user                     User      @relation(fields: [uid], references: [uid])
+  uid                      String
+  list                     List      @relation(fields: [listId], references: [listId])
+  listId                   String
+
+  sortOrder                Int?
+  active                   Boolean   @default(true)
+
+  notifyOnListShared       Boolean   @default(true)
+  notifyOnListItemsUpdate  Boolean   @default(true)
+  notifyOnItemStateUpdate  Boolean   @default(true)
+
+  deleted                  Boolean   @default(false)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  @@id([uid, listId])
+}
+
+model ListItem {
+  listItemId               String    @id @default(uuid())
+  item                     Item      @relation(fields: [itemId], references: [itemId])
+  itemId                   String
+  list                     List      @relation(fields: [listId], references: [listId])
+  listId                   String
+
+  name                     String
+  type                     String    @default("task")
+  units                    String?
+  quantity                 Decimal   @default(1.0)
+  deadline                 DateTime?
+
+  ongoing                  Boolean   @default(false)
+  assignee                 User?     @relation(fields: [assigneeId], references: [uid])
+  assigneeId               String?
+  completed                Boolean   @default(true)
+
+  sortOrder                Int?
+
+  deleted                  Boolean   @default(false)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+}
