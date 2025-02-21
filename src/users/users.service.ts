@@ -43,19 +43,73 @@ export class UsersService {
   }
 
   async findByAuth(auth: string) {
-    console.log('findByAuth', auth);
     if (!auth) {
-      throw new UnauthorizedException('Invalid auth token');
+      throw new UnauthorizedException('Missing auth token');
     }
 
     const user = await this.prisma.user.findFirst({
       where: { auth },
+      include: {
+        lists: {
+          select: {
+            listId: true,
+            sortOrder: true,
+            notifyOnListShared: true,
+            notifyOnListItemsUpdate: true,
+            notifyOnItemStateUpdate: true,
+            list: {
+              select: {
+                listId: true,
+                shareId: true,
+                name: true,
+                type: true,
+                deadline: true,
+                completed: true,
+                completedAt: true,
+                hideCompleted: true,
+                deleted: true,
+                users: {
+                  select: {
+                    user: {
+                      select: {
+                        uid: true,
+                        names: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    return user;
+    const transformedUser = {
+      ...user,
+      lists: user.lists.map((list) => {
+        const listContents: Partial<typeof list> = {};
+        if (list) {
+          Object.keys(list as Record<string, unknown>).forEach(
+            (key: string) => {
+              if (key !== 'list') {
+                listContents[key] = list[key];
+              }
+            },
+          );
+        }
+        return {
+          ...list.list,
+          ...listContents,
+          users: list.list.users.map((user) => user.user),
+        };
+      }),
+    };
+
+    return transformedUser;
   }
 }
