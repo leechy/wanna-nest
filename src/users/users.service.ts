@@ -49,7 +49,13 @@ export class UsersService {
 
     const user = await this.prisma.user.findFirst({
       where: { auth },
-      include: {
+      select: {
+        uid: true,
+        names: true,
+        expo_push_token: true,
+        notifyOnListShared: true,
+        notifyOnListItemsUpdate: true,
+        notifyOnItemStateUpdate: true,
         lists: {
           select: {
             listId: true,
@@ -76,6 +82,22 @@ export class UsersService {
                         names: true,
                       },
                     },
+                  },
+                },
+                listItems: {
+                  select: {
+                    listItemId: true,
+                    itemId: true,
+                    name: true,
+                    type: true,
+                    units: true,
+                    quantity: true,
+                    deadline: true,
+                    ongoing: true,
+                    assignee: true,
+                    completed: true,
+                    sortOrder: true,
+                    deleted: true,
                   },
                 },
               },
@@ -105,7 +127,9 @@ export class UsersService {
         return {
           ...list.list,
           ...listContents,
-          users: list.list.users.map((user) => user.user),
+          users: list.list.users
+            .filter((listUser) => listUser.user.uid !== user.uid)
+            .map((otherUser) => otherUser.user),
         };
       }),
     };
