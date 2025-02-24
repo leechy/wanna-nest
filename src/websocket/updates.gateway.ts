@@ -4,32 +4,33 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  MessageBody,
+  ConnectedSocket,
+  OnGatewayInit,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { type Server, type Socket } from 'socket.io';
 import { UsersService } from '../users/users.service';
 import { ListsService } from '../lists/lists.service';
+import { OnEvent } from '@nestjs/event-emitter';
 
-type ClientMessage = {
-  type:
-    | 'auth'
-    | 'register'
-    | 'createList'
-    | 'updateList'
-    | 'createItem'
-    | 'updateItem';
-  payload: any;
-};
+type ClientMessage = any;
 
 @WebSocketGateway({
   cors: {
     origin: '*',
+    methods: ['GET', 'POST'],
+    credentials: true,
   },
+  serveClient: false,
+  namespace: '/',
+  transports: ['polling', 'websocket'],
+  allowEIO3: true,
 })
 export class UpdatesGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
-  server: Server;
+  private server: Server;
 
   private clientToAuth = new Map<string, string>();
   private authToClients = new Map<string, Set<string>>();
@@ -39,7 +40,14 @@ export class UpdatesGateway
     private listsService: ListsService,
   ) {}
 
+  afterInit(server: Server) {
+    console.log('Initialized!', server);
+  }
+
   handleConnection(client: Socket) {
+    client.emit('message', {
+      data: 'Hello from server',
+    });
     console.log('Client connected:', client.id);
   }
 
@@ -58,24 +66,22 @@ export class UpdatesGateway
     }
   }
 
-  @SubscribeMessage('message')
-  async handleMessage(client: Socket, message: ClientMessage) {
+  @SubscribeMessage('auth')
+  async handleAuth(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    console.log('Received auth:', this.server, client.id, message);
+    client.emit('message', { name: 'received', message });
+
     try {
-      switch (message.type) {
-        case 'register':
-          await this.registerClient(client, message);
-          break;
-
-        case 'auth':
-          await this.authenticateClient(client, message);
-          break;
-
-        case 'createList':
-          await this.createList(client, message.payload);
-          break;
-
-        // Add other message handlers...
+      if (message.auth && !message.names) {
+        await this.authenticateClient(client, message);
+      } else {
+        await this.registerClient(client, message);
       }
+
+      // Add other message handlers...
     } catch (error) {
       client.emit('error', {
         type: message.type,
@@ -84,24 +90,44 @@ export class UpdatesGateway
     }
   }
 
+  private storeClientAssociation(clientId: string, auth: string) {
+    this.clientToAuth.set(clientId, auth);
+    if (!this.authToClients.has(auth)) {
+      this.authToClients.set(auth, new Set());
+    }
+    this.authToClients.get(auth)?.add(clientId);
+    console.log('Client association:', this.clientToAuth, this.authToClients);
+  }
+
   private async registerClient(client: Socket, message: ClientMessage) {
     const clientId: string = client.id;
-    const { uid, auth, names, expo_push_token } = message.payload;
-    const newUser = await this.usersService.create({
-      uid,
-      auth,
-      names,
-      expo_push_token,
-    });
-    client.emit('registered', newUser);
+    const { uid, auth, names, expo_push_token } = message;
+    console.log('Registering client:', clientId, uid, auth, names);
+    const newUser = await this.usersService
+      .create({
+        uid,
+        auth,
+        names,
+        expo_push_token,
+      })
+      .catch((error) => {
+        console.log('Failed to create user:', error);
+        client.emit('error', {
+          type: message.type,
+          error: error.message,
+        });
+        throw error;
+      });
 
     // Store client association
     this.storeClientAssociation(clientId, (auth || newUser.auth) as string);
+
+    client.emit('auth', { newUser });
   }
 
   private async authenticateClient(client: Socket, message: ClientMessage) {
     // Check if auth token is valid
-    const { auth } = message.payload;
+    const { auth } = message;
     if (!auth) {
       throw new Error('Missing auth token');
     }
@@ -115,38 +141,64 @@ export class UpdatesGateway
     this.storeClientAssociation(clientId, auth as string);
 
     // Send initial data
-    client.emit('userData', userData);
+    client.emit('auth', { userData });
   }
 
-  private async createList(client: Socket, listData: any) {
+  @SubscribeMessage('list:create')
+  async handleListCreateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
     const clientId: string = client.id;
     const auth = this.clientToAuth.get(clientId);
     if (!auth) {
       throw new Error('Not authenticated');
     }
 
-    const newList = await this.listsService.create(auth, listData);
-    this.broadcastListUpdate(newList.listId, 'created', newList);
+    try {
+      const newList = await this.listsService.create(auth, message);
+      this.broadcastListUpdate(newList.listId, 'created', newList);
+    } catch (error) {
+      console.log('Failed to handle list creation:', error.message);
+      client.emit('error', {
+        type: 'list:create',
+        error: error.message,
+      });
+    }
   }
 
-  private storeClientAssociation(clientId: string, auth: string) {
-    this.clientToAuth.set(clientId, auth);
-    if (!this.authToClients.has(auth)) {
-      this.authToClients.set(auth, new Set());
+  @SubscribeMessage('list:update')
+  async handleListUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    const clientId: string = client.id;
+    const auth = this.clientToAuth.get(clientId);
+    if (!auth) {
+      throw new Error('Not authenticated');
     }
-    this.authToClients.get(auth)?.add(clientId);
+
+    const listId: string = message.listId;
+    try {
+      const updatedList = await this.listsService.update(auth, listId, message);
+      this.broadcastListUpdate(updatedList.listId, 'updated', updatedList);
+    } catch (error) {
+      console.log('Failed to handle list update:', error.message);
+      client.emit('error', {
+        type: 'list:update',
+        error: error.message,
+      });
+    }
+  }
+
+  @OnEvent('list.update')
+  handleListUpdate(payload: { listId: string; action: string; data: any }) {
+    const { listId, action, data } = payload;
+    this.broadcastListUpdate(listId, action, data);
   }
 
   private broadcastListUpdate(listId: string, action: string, data: any) {
-    // Find all clients that should receive this update
-    this.server.emit(`list:${listId}`, {
-      action,
-      data,
-    });
-  }
-
-  // Method to be called from services when data changes
-  notifyListUpdate(listId: string, action: string, data: any) {
-    this.broadcastListUpdate(listId, action, data);
+    // Send the list update to all the clients subscribed to it
+    this.server.emit(`list:${listId}`, { action, data });
   }
 }
