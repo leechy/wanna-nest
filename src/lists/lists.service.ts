@@ -5,13 +5,13 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateListDto, UpdateListDto } from './dto/list.dto';
-import { UpdatesGateway } from 'src/websocket/updates.gateway';
+import { EventsService } from '../events/events.service';
 
 @Injectable()
 export class ListsService {
   constructor(
     private prisma: PrismaService,
-    private updatesGateway: UpdatesGateway,
+    private events: EventsService,
   ) {}
 
   async create(auth: string, createListDto: CreateListDto) {
@@ -61,7 +61,7 @@ export class ListsService {
     });
 
     // Notify connected clients
-    await this.updatesGateway.notifyListUpdate(listId, 'updated', updatedList);
+    this.events.emitListUpdate(listId, 'updated', updatedList);
 
     return updatedList;
   }
