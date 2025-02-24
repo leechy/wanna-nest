@@ -8,9 +8,12 @@ import { ListsService } from './lists/lists.service';
 import { ItemsController } from './items/items.controller';
 import { ItemsService } from './items/items.service';
 import { PrismaService } from './prisma/prisma.service';
+import { UpdatesGateway } from './websocket/updates.gateway';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { EventsService } from './events/events.service';
 
 @Module({
-  imports: [],
+  imports: [EventEmitterModule.forRoot()],
   controllers: [
     AppController,
     UsersController,
@@ -23,6 +26,8 @@ import { PrismaService } from './prisma/prisma.service';
     ListsService,
     ItemsService,
     PrismaService,
+    UpdatesGateway,
+    EventsService,
   ],
 })
 export class AppModule {}
