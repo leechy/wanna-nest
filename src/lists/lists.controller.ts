@@ -43,4 +43,12 @@ export class ListsController {
   ) {
     return this.listsService.joinList(auth, shareId);
   }
+
+  @Post('leave/:listId')
+  leaveList(
+    @Headers('authorization') auth: string,
+    @Param('listId') listId: string,
+  ) {
+    return this.listsService.leaveList(auth, listId);
+  }
 }

@@ -84,7 +84,7 @@ export class UpdatesGateway
       // Add other message handlers...
     } catch (error) {
       client.emit('error', {
-        type: message.type,
+        event: 'auth',
         error: error.message,
       });
     }
@@ -113,7 +113,7 @@ export class UpdatesGateway
       .catch((error) => {
         console.log('Failed to create user:', error);
         client.emit('error', {
-          type: message.type,
+          event: 'auth',
           error: error.message,
         });
         throw error;
@@ -161,7 +161,7 @@ export class UpdatesGateway
     } catch (error) {
       console.log('Failed to handle list creation:', error.message);
       client.emit('error', {
-        type: 'list:create',
+        event: 'list:create',
         error: error.message,
       });
     }
@@ -185,7 +185,76 @@ export class UpdatesGateway
     } catch (error) {
       console.log('Failed to handle list update:', error.message);
       client.emit('error', {
-        type: 'list:update',
+        event: 'list:update',
+        error: error.message,
+      });
+    }
+  }
+
+  @SubscribeMessage('list:view')
+  async handleListViewMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    const listId: string = message.listId;
+    try {
+      const listData = await this.listsService.findByShareId(listId);
+      client.emit('list:view', { listData });
+    } catch (error) {
+      console.log('Failed to handle list view:', error.message);
+      client.emit('error', {
+        event: 'list:view',
+        error: error.message,
+      });
+    }
+  }
+
+  @SubscribeMessage('list:join')
+  async handleListJoinMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    const clientId: string = client.id;
+    const auth = this.clientToAuth.get(clientId);
+    if (!auth) {
+      throw new Error('Not authenticated');
+    }
+
+    const shareId: string = message.shareId;
+    try {
+      const joinedList = await this.listsService.joinList(auth, shareId);
+      // update the lists of the client
+      client.emit('list:join', { joinedList });
+      // send the new data to all the list clients
+      this.broadcastListUpdate(joinedList.listId, 'joined', joinedList);
+    } catch (error) {
+      console.log('Failed to handle list join:', error.message);
+      client.emit('error', {
+        event: 'list:join',
+        error: error.message,
+      });
+    }
+  }
+
+  @SubscribeMessage('list:leave')
+  async handleListLeaveMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    const clientId: string = client.id;
+    const auth = this.clientToAuth.get(clientId);
+    if (!auth) {
+      throw new Error('Not authenticated');
+    }
+
+    const listId: string = message.listId;
+    try {
+      const leftList = await this.listsService.leaveList(auth, listId);
+      this.broadcastListUpdate(listId, 'left', leftList);
+    } catch (error) {
+      console.log('Failed to handle list leave:', error.message);
+      client.emit('error', {
+        event: 'list:leave',
         error: error.message,
       });
     }

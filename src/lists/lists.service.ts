@@ -60,8 +60,63 @@ export class ListsService {
       data: updateListDto,
     });
 
+    // Select the list from the user perspective
+    // and the items inside to send the update
+    const list = await this.prisma.userList.findFirst({
+      where: {
+        uid: userList.uid,
+        listId,
+      },
+      select: {
+        listId: true,
+        sortOrder: true,
+        notifyOnListShared: true,
+        notifyOnListItemsUpdate: true,
+        notifyOnItemStateUpdate: true,
+        list: {
+          select: {
+            listId: true,
+            shareId: true,
+            name: true,
+            type: true,
+            deadline: true,
+            completed: true,
+            completedAt: true,
+            hideCompleted: true,
+            deleted: true,
+            users: {
+              select: {
+                user: {
+                  select: {
+                    uid: true,
+                    names: true,
+                  },
+                },
+              },
+            },
+            listItems: {
+              select: {
+                listItemId: true,
+                itemId: true,
+                name: true,
+                type: true,
+                units: true,
+                quantity: true,
+                deadline: true,
+                ongoing: true,
+                assignee: true,
+                completed: true,
+                sortOrder: true,
+                deleted: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
     // Notify connected clients
-    this.events.emitListUpdate(listId, 'updated', updatedList);
+    this.events.emitListUpdate(listId, 'updated', list);
 
     return updatedList;
   }
@@ -114,5 +169,41 @@ export class ListsService {
     });
 
     return userList;
+  }
+
+  async leaveList(auth: string, listId: string) {
+    if (!auth) {
+      throw new UnauthorizedException('Missing auth token');
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { auth },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid auth token');
+    }
+
+    const userList = await this.prisma.userList.findFirst({
+      where: {
+        uid: user.uid,
+        listId,
+      },
+    });
+
+    if (!userList) {
+      throw new NotFoundException('List not found');
+    }
+
+    await this.prisma.userList.delete({
+      where: {
+        uid_listId: {
+          uid: user.uid,
+          listId,
+        },
+      },
+    });
+
+    return true;
   }
 }
