@@ -62,9 +62,53 @@ export class ListsService {
 
     // Select the list from the user perspective
     // and the items inside to send the update
-    const list = await this.prisma.userList.findFirst({
+    const list = await this.getListData(listId);
+
+    // Notify connected clients
+    this.events.emitListUpdate(listId, 'updated', list);
+
+    return updatedList;
+  }
+
+  async findByShareId(shareId: string) {
+    const list = await this.prisma.list.findFirst({
+      where: { shareId },
+      select: {
+        listId: true,
+        shareId: true,
+        name: true,
+        type: true,
+        deadline: true,
+      },
+    });
+
+    if (!list) {
+      throw new NotFoundException('List not found');
+    }
+
+    return list;
+  }
+
+  async findById(auth: string, listId: string) {
+    if (!auth) {
+      throw new UnauthorizedException('Missing auth token');
+    }
+
+    const userList = await this.getListData(listId);
+
+    if (!userList) {
+      throw new UnauthorizedException('Access denied');
+    }
+
+    // Notify connected clients
+    this.events.emitListUpdate(listId, 'updated', userList);
+
+    return userList;
+  }
+
+  private async getListData(listId: string) {
+    return this.prisma.userList.findFirst({
       where: {
-        uid: userList.uid,
         listId,
       },
       select: {
@@ -114,30 +158,6 @@ export class ListsService {
         },
       },
     });
-
-    // Notify connected clients
-    this.events.emitListUpdate(listId, 'updated', list);
-
-    return updatedList;
-  }
-
-  async findByShareId(shareId: string) {
-    const list = await this.prisma.list.findFirst({
-      where: { shareId },
-      select: {
-        listId: true,
-        shareId: true,
-        name: true,
-        type: true,
-        deadline: true,
-      },
-    });
-
-    if (!list) {
-      throw new NotFoundException('List not found');
-    }
-
-    return list;
   }
 
   async joinList(auth: string, shareId: string) {

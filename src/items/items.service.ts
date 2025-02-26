@@ -4,16 +4,24 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from 'src/events/events.service';
 import { CreateItemDto } from './dto/item.dto';
 import { filterModelProperties } from 'src/utils/model-utils';
-import { Prisma } from '@prisma/client';
+import { Item, ListItem, Prisma } from '@prisma/client';
 
 @Injectable()
 export class ItemsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private events: EventsService,
+  ) {}
 
-  // Get all public items
-  async findPublicItems() {
+  /**
+   * Returns a list of all Items marked as public
+   *
+   * @returns {Item[]}  list of public items
+   */
+  async findPublicItems(): Promise<Item[]> {
     return this.prisma.item.findMany({
       where: {
         public: true,
@@ -22,8 +30,14 @@ export class ItemsService {
     });
   }
 
-  // Create new item (requires auth)
-  async createItem(auth: string, createItemDto: CreateItemDto) {
+  /**
+   * Creates new item AND list item
+   *
+   * @param {string} auth  auth token
+   * @param {object} createItemDto  item data
+   * @returns {Item}  newly created item
+   */
+  async createItem(auth: string, createItemDto: CreateItemDto): Promise<Item> {
     if (!auth) {
       throw new UnauthorizedException('Missing auth token');
     }
@@ -84,8 +98,20 @@ export class ItemsService {
     return item;
   }
 
-  // Add item to list
-  async addItemToList(auth: string, listId: string, itemId: string) {
+  /**
+   * Add already existing item to list
+   * this would create a new list item
+   *
+   * @param {string} auth  auth token
+   * @param {string} listId  list id
+   * @param {string} itemId  already existing item id
+   * @returns {ListItem}  newly created list item
+   */
+  async addItemToList(
+    auth: string,
+    listId: string,
+    itemId: string,
+  ): Promise<ListItem> {
     if (!auth) {
       throw new UnauthorizedException('Missing auth token');
     }
@@ -132,5 +158,54 @@ export class ItemsService {
         units: item.units,
       },
     });
+  }
+
+  /**
+   * Updates the specified list item
+   *
+   * @param {string} auth  auth token
+   * @param {string} listItemId  list item id
+   * @param {object} updateListItemDto  list item data
+   * @returns {ListItem}  updated list item
+   */
+  async updateListItem(
+    auth: string,
+    listItemId: string,
+    updateListItemDto: Partial<ListItem>,
+  ): Promise<ListItem> {
+    if (!auth) {
+      throw new UnauthorizedException('Missing auth token');
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { auth },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid auth token');
+    }
+
+    // Check if user has access to the list
+    const userList = await this.prisma.userList.findFirst({
+      where: {
+        uid: user.uid,
+        listId: updateListItemDto.listId,
+      },
+    });
+
+    if (!userList) {
+      throw new UnauthorizedException('Access denied');
+    }
+
+    // Update list item
+    const updatedItem = await this.prisma.listItem.update({
+      where: { listItemId },
+      data: updateListItemDto,
+    });
+
+    // Send the updated list to all subscribers
+    this.events.emitListUpdate(updateListItemDto.listId, 'updated', userList);
+
+    return updatedItem;
   }
 }

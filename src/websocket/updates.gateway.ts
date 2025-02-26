@@ -11,7 +11,10 @@ import {
 import { type Server, type Socket } from 'socket.io';
 import { UsersService } from '../users/users.service';
 import { ListsService } from '../lists/lists.service';
+import { ItemsService } from 'src/items/items.service';
 import { OnEvent } from '@nestjs/event-emitter';
+import { CreateItemDto } from 'src/items/dto/item.dto';
+import { ListItem } from '@prisma/client';
 
 type ClientMessage = any;
 
@@ -38,6 +41,7 @@ export class UpdatesGateway
   constructor(
     private usersService: UsersService,
     private listsService: ListsService,
+    private itemsService: ItemsService,
   ) {}
 
   afterInit(server: Server) {
@@ -269,5 +273,123 @@ export class UpdatesGateway
   private broadcastListUpdate(listId: string, action: string, data: any) {
     // Send the list update to all the clients subscribed to it
     this.server.emit(`list:${listId}`, { action, data });
+  }
+
+  @SubscribeMessage('item:create')
+  async handleItemCreateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    const clientId: string = client.id;
+    const auth = this.clientToAuth.get(clientId);
+    if (!auth) {
+      throw new Error('Not authenticated');
+    }
+
+    try {
+      const { listId, ...itemData } = message;
+
+      // Create item and get updated list
+      const result = await this.itemsService.createItem(auth, {
+        ...itemData,
+        listId,
+      } as CreateItemDto);
+
+      // Broadcast the entire updated list to all subscribers
+      if (listId && typeof listId === 'string') {
+        const updatedList = await this.listsService.findById(auth, listId);
+        this.broadcastListUpdate(listId, 'itemCreated', updatedList);
+      }
+
+      // Send acknowledgment to the client
+      client.emit('item:create', { result });
+    } catch (error) {
+      console.log('Failed to handle item creation:', error.message);
+      client.emit('error', {
+        event: 'item:create',
+        error: error.message,
+      });
+    }
+  }
+
+  @SubscribeMessage('item:update')
+  async handleItemUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    const clientId: string = client.id;
+    const auth = this.clientToAuth.get(clientId);
+    if (!auth) {
+      throw new Error('Not authenticated');
+    }
+
+    try {
+      const { listId, itemId, ...updateData } = message;
+
+      // Update item
+      await this.itemsService.updateListItem(
+        auth,
+        itemId as string,
+        updateData as Partial<ListItem>,
+      );
+
+      // Get and broadcast the entire updated list
+      if (listId && typeof listId === 'string') {
+        const updatedList = await this.listsService.findById(auth, listId);
+        this.broadcastListUpdate(listId, 'itemUpdated', updatedList);
+      }
+
+      // Send acknowledgment to the client
+      client.emit('item:update', { success: true });
+    } catch (error) {
+      console.log('Failed to handle item update:', error.message);
+      client.emit('error', {
+        event: 'item:update',
+        error: error.message,
+      });
+    }
+  }
+
+  @SubscribeMessage('listItem:update')
+  async handleListItemUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ClientMessage,
+  ) {
+    const clientId: string = client.id;
+    const auth = this.clientToAuth.get(clientId);
+    if (!auth) {
+      throw new Error('Not authenticated');
+    }
+
+    try {
+      const { listId, listItemId, ...updateData } = message;
+
+      // Update list item
+      if (
+        listId &&
+        typeof listId === 'string' &&
+        listItemId &&
+        typeof listItemId === 'string'
+      ) {
+        await this.itemsService.updateListItem(
+          auth,
+          listItemId,
+          updateData as Partial<ListItem>,
+        );
+
+        // Get and broadcast the entire updated list
+        const updatedList = await this.listsService.findById(auth, listId);
+        this.broadcastListUpdate(listId, 'itemUpdated', updatedList);
+      }
+
+      // Send acknowledgment to the client
+      client.emit('listItem:update', { success: true });
+    } catch (error) {
+      console.log('Failed to handle list item update:', error.message);
+      client.emit('error', {
+        event: 'listItem:update',
+        error: error.message,
+      });
+    }
   }
 }
