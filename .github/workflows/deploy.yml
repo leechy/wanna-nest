@@ -29,7 +29,7 @@ jobs:
       - name: Create deployment package
         run: |
           mkdir -p deployment
-          cp -r dist package.json package-lock.json prisma .env deployment/
+          cp -r dist package.json package-lock.json prisma deployment/
           cd deployment && npm ci --production
 
       - name: Deploy to Digital Ocean
