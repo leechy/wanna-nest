@@ -111,7 +111,7 @@ model ListItem {
   ongoing                  Boolean   @default(false)
   assignee                 User?     @relation(fields: [assigneeId], references: [uid])
   assigneeId               String?
-  completed                Boolean   @default(true)
+  completed                Boolean   @default(false)
 
   sortOrder                Int?
 

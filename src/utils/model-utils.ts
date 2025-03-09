@@ -13,6 +13,7 @@ export function filterModelProperties<T extends object>(
   ]);
 
   const listItemProperties = new Set([
+    'listItemId',
     'itemId',
     'listId',
     'name',

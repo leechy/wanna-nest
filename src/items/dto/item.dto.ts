@@ -14,6 +14,10 @@ export class CreateItemDto {
   itemId?: string;
 
   @IsString()
+  @IsOptional()
+  listItemId?: string;
+
+  @IsString()
   @IsNotEmpty({ message: 'List ID is required' })
   listId: string;
 
