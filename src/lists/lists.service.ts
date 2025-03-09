@@ -131,7 +131,7 @@ export class ListsService {
   }
 
   private async getListData(listId: string) {
-    return this.prisma.userList.findFirst({
+    const result = await this.prisma.userList.findFirst({
       where: {
         listId,
       },
@@ -184,6 +184,17 @@ export class ListsService {
         },
       },
     });
+
+    const { list, ...userList } = result;
+
+    if (!list) {
+      throw new NotFoundException('List not found');
+    }
+
+    return {
+      ...list,
+      ...userList,
+    };
   }
 
   async joinList(auth: string, shareId: string) {
