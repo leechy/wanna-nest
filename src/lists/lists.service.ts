@@ -55,10 +55,34 @@ export class ListsService {
       throw new UnauthorizedException('Access denied');
     }
 
+    const { sortOrder, updatedAt, users, listItems, ...updateListData } =
+      updateListDto;
+
+    if (users || listItems) {
+      console.warn(
+        'Properties `users` and `listItems` should not be sent back to the server',
+      );
+    }
+
     const updatedList = this.prisma.list.update({
       where: { listId },
-      data: updateListDto,
+      data: updateListData,
     });
+
+    // update user's list data data
+    if (sortOrder || updatedAt) {
+      await this.prisma.userList.update({
+        where: {
+          uid_listId: {
+            uid: userList.uid,
+            listId,
+          },
+        },
+        data: {
+          sortOrder,
+        },
+      });
+    }
 
     // Select the list from the user perspective
     // and the items inside to send the update

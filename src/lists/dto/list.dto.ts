@@ -4,6 +4,8 @@ import {
   IsDate,
   IsNotEmpty,
   IsBoolean,
+  IsNumber,
+  IsArray,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -65,6 +67,10 @@ export class UpdateListDto {
   @Type(() => Date)
   completedAt?: Date;
 
+  @IsNumber()
+  @IsOptional()
+  sortOrder?: number;
+
   @IsBoolean()
   @IsOptional()
   notifyOnListShared?: boolean;
@@ -77,7 +83,22 @@ export class UpdateListDto {
   @IsOptional()
   notifyOnItemStateUpdate?: boolean;
 
+  @IsDate()
+  @IsOptional()
+  @Type(() => Date)
+  updatedAt?: Date;
+
   @IsBoolean()
   @IsOptional()
   deleted?: boolean;
+
+  // not welcomed properties
+  // that can be sent by the client
+  @IsArray()
+  @IsOptional()
+  users?: any;
+
+  @IsArray()
+  @IsOptional()
+  listItems?: any;
 }
