@@ -324,12 +324,12 @@ export class UpdatesGateway
     }
 
     try {
-      const { listId, itemId, ...updateData } = message;
+      const { listId, listItemId, ...updateData } = message;
 
       // Update item
       await this.itemsService.updateListItem(
         auth,
-        itemId as string,
+        listItemId as string,
         updateData as Partial<ListItem>,
       );
 
