@@ -178,6 +178,7 @@ export class ListsService {
                   },
                 },
                 completed: true,
+                completedAt: true,
                 sortOrder: true,
                 deleted: true,
                 updatedAt: true,

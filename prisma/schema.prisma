@@ -112,6 +112,7 @@ model ListItem {
   assignee                 User?     @relation(fields: [assigneeId], references: [uid])
   assigneeId               String?
   completed                Boolean   @default(false)
+  completedAt              DateTime?
 
   sortOrder                Int?
 

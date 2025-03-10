@@ -85,6 +85,11 @@ export class UpdateListItemDto {
   @IsOptional()
   completed?: boolean;
 
+  @IsDate()
+  @IsOptional()
+  @Type(() => Date)
+  completedAt?: Date;
+
   @IsInt()
   @IsOptional()
   sortOrder?: number;
