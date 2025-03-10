@@ -172,7 +172,12 @@ export class ListsService {
                 quantity: true,
                 deadline: true,
                 ongoing: true,
-                assignee: true,
+                assignee: {
+                  select: {
+                    uid: true,
+                    names: true,
+                  },
+                },
                 completed: true,
                 sortOrder: true,
                 deleted: true,
