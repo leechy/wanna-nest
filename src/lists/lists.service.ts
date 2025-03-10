@@ -130,7 +130,7 @@ export class ListsService {
     return userList;
   }
 
-  private async getListData(listId: string) {
+  async getListData(listId: string) {
     const result = await this.prisma.userList.findFirst({
       where: {
         listId,
@@ -174,7 +174,6 @@ export class ListsService {
                 ongoing: true,
                 assignee: {
                   select: {
-                    uid: true,
                     names: true,
                   },
                 },
@@ -198,6 +197,11 @@ export class ListsService {
 
     return {
       ...list,
+      users: list.users.map((u) => u.user),
+      listItems: list.listItems.map((li) => ({
+        ...li,
+        assignee: li.assignee?.names || null,
+      })),
       ...userList,
     };
   }

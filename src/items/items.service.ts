@@ -8,12 +8,14 @@ import { EventsService } from 'src/events/events.service';
 import { CreateItemDto } from './dto/item.dto';
 import { filterModelProperties } from 'src/utils/model-utils';
 import { Item, ListItem, Prisma } from '@prisma/client';
+import { ListsService } from 'src/lists/lists.service';
 
 @Injectable()
 export class ItemsService {
   constructor(
     private prisma: PrismaService,
     private events: EventsService,
+    private listsService: ListsService,
   ) {}
 
   /**
@@ -197,14 +199,22 @@ export class ItemsService {
       throw new UnauthorizedException('Access denied');
     }
 
+    // @ts-expect-error: assignee is not a valid property, but can exist, and should be removed
+    const { assignee, ...updateData } = updateListItemDto;
+    if (assignee) {
+      console.warn('Property `assignee` should not be sent back to the server');
+    }
+
     // Update list item
     const updatedItem = await this.prisma.listItem.update({
       where: { listItemId },
-      data: updateListItemDto,
+      data: updateData,
     });
 
+    const list = await this.listsService.getListData(updateListItemDto.listId);
+
     // Send the updated list to all subscribers
-    this.events.emitListUpdate(updateListItemDto.listId, 'updated', userList);
+    this.events.emitListUpdate(updateListItemDto.listId, 'updated', list);
 
     return updatedItem;
   }

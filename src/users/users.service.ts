@@ -137,6 +137,10 @@ export class UsersService {
           users: list.list.users
             .filter((listUser) => listUser.user.uid !== user.uid)
             .map((otherUser) => otherUser.user),
+          listItems: list.list.listItems.map((li) => ({
+            ...li,
+            assignee: li.assignee?.names || null,
+          })),
         };
       }),
     };

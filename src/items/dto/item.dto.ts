@@ -77,6 +77,10 @@ export class UpdateListItemDto {
   @IsOptional()
   assigneeId?: string;
 
+  @IsString()
+  @IsOptional()
+  assignee?: string;
+
   @IsBoolean()
   @IsOptional()
   completed?: boolean;
