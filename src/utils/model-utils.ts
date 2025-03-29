@@ -19,6 +19,7 @@ export function filterModelProperties<T extends object>(
     'name',
     'type',
     'units',
+    'quantity',
     'assigneeId',
     'active',
     'completed',

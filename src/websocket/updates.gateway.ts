@@ -15,6 +15,7 @@ import { ItemsService } from 'src/items/items.service';
 import { OnEvent } from '@nestjs/event-emitter';
 import { CreateItemDto } from 'src/items/dto/item.dto';
 import { ListItem } from '@prisma/client';
+import { CreateListDto } from 'src/lists/dto/list.dto';
 
 type ClientMessage = any;
 
@@ -160,7 +161,10 @@ export class UpdatesGateway
     }
 
     try {
-      const newList = await this.listsService.create(auth, message);
+      const newList = await this.listsService.create(
+        auth,
+        message as CreateListDto,
+      );
       this.broadcastListUpdate(newList.listId, 'created', newList);
     } catch (error) {
       console.log('Failed to handle list creation:', error.message);
@@ -184,7 +188,11 @@ export class UpdatesGateway
 
     const listId: string = message.listId;
     try {
-      const updatedList = await this.listsService.update(auth, listId, message);
+      const updatedList = await this.listsService.update(
+        auth,
+        listId,
+        message as CreateListDto,
+      );
       this.broadcastListUpdate(updatedList.listId, 'updated', updatedList);
     } catch (error) {
       console.log('Failed to handle list update:', error.message);
