@@ -44,6 +44,18 @@ export class CreateItemDto {
 
   @IsBoolean()
   @IsOptional()
+  ongoing?: boolean;
+
+  @IsString()
+  @IsOptional()
+  assigneeId?: string;
+
+  @IsString()
+  @IsOptional()
+  assignee?: string;
+
+  @IsBoolean()
+  @IsOptional()
   public?: boolean;
 }
 

@@ -9,7 +9,6 @@ export function filterModelProperties<T extends object>(
     'units',
     'public',
     'active',
-    'deleted',
   ]);
 
   const listItemProperties = new Set([
@@ -20,10 +19,12 @@ export function filterModelProperties<T extends object>(
     'type',
     'units',
     'quantity',
+    'ongoing',
     'assigneeId',
     'active',
     'completed',
     'deadline',
+    'public',
     'deleted',
   ]);
 
