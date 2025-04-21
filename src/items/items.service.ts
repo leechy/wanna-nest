@@ -218,4 +218,79 @@ export class ItemsService {
 
     return updatedItem;
   }
+
+  /**
+   * Update multiple list items at once
+   *
+   * @param {string} auth auth token
+   * @param {Array<{listItemId: string, data: Partial<ListItem>}>} updates array of updates
+   * @returns {Promise<ListItem[]>} array of updated items
+   */
+  async updateMultipleListItems(
+    auth: string,
+    updates: Array<{ listItemId: string; data: Partial<ListItem> }>,
+  ): Promise<ListItem[]> {
+    if (!auth) {
+      throw new UnauthorizedException('Missing auth token');
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { auth },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid auth token');
+    }
+
+    // All updates must be for the same list to work properly
+    if (updates.length === 0) {
+      return [];
+    }
+
+    // Get the first item to find the list
+    const firstItem = await this.prisma.listItem.findUnique({
+      where: { listItemId: updates[0].listItemId },
+      select: { listId: true },
+    });
+
+    if (!firstItem) {
+      throw new NotFoundException('List item not found');
+    }
+
+    // Check if user has access to the list
+    const userList = await this.prisma.userList.findFirst({
+      where: {
+        uid: user.uid,
+        listId: firstItem.listId,
+      },
+    });
+
+    if (!userList) {
+      throw new UnauthorizedException('Access denied');
+    }
+
+    // Update all items in a transaction
+    const updatedItems = await this.prisma.$transaction(
+      updates.map((update) => {
+        // @ts-expect-error: assignee is not a valid property, but can exist, and should be removed
+        const { assignee, ...updateData } = update.data;
+        if (assignee) {
+          console.warn(
+            'Property `assignee` should not be sent back to the server',
+          );
+        }
+
+        return this.prisma.listItem.update({
+          where: { listItemId: update.listItemId },
+          data: updateData,
+        });
+      }),
+    );
+
+    // Send only one update for the list
+    const list = await this.listsService.getListData(firstItem.listId);
+    this.events.emitListUpdate(firstItem.listId, 'updated', list);
+
+    return updatedItems;
+  }
 }

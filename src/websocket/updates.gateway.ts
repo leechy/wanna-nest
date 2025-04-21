@@ -400,4 +400,35 @@ export class UpdatesGateway
       });
     }
   }
+
+  @SubscribeMessage('listItems:updateBatch')
+  async handleListItemsBatchUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    message: { updates: Array<{ listItemId: string; data: any }> },
+  ) {
+    const clientId: string = client.id;
+    const auth = this.clientToAuth.get(clientId);
+    if (!auth) {
+      throw new Error('Not authenticated');
+    }
+
+    try {
+      const result = await this.itemsService.updateMultipleListItems(
+        auth,
+        message.updates,
+      );
+
+      client.emit('listItems:updateBatch', {
+        success: true,
+        count: result.length,
+      });
+    } catch (error) {
+      console.log('Failed to handle batch list item update:', error.message);
+      client.emit('error', {
+        event: 'listItems:updateBatch',
+        error: error.message,
+      });
+    }
+  }
 }

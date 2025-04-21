@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ItemsService } from './items.service';
 import { CreateItemDto } from './dto/item.dto';
+import { ListItem } from '@prisma/client';
 
 @Controller('items')
 export class ItemsController {
@@ -34,5 +35,13 @@ export class ItemsController {
     @Param('itemId') itemId: string,
   ) {
     return this.itemsService.addItemToList(auth, listId, itemId);
+  }
+
+  @Put('batch')
+  updateMultiple(
+    @Headers('authorization') auth: string,
+    @Body() updates: Array<{ listItemId: string; data: Partial<ListItem> }>,
+  ) {
+    return this.itemsService.updateMultipleListItems(auth, updates);
   }
 }
