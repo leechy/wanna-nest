@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -187,11 +188,21 @@ export class ItemsService {
       throw new UnauthorizedException('Invalid auth token');
     }
 
+    // Take the list from the stored list item, never from the client data
+    const listItem = await this.prisma.listItem.findUnique({
+      where: { listItemId },
+      select: { listId: true },
+    });
+
+    if (!listItem) {
+      throw new NotFoundException('List item not found');
+    }
+
     // Check if user has access to the list
     const userList = await this.prisma.userList.findFirst({
       where: {
         uid: user.uid,
-        listId: updateListItemDto.listId,
+        listId: listItem.listId,
       },
     });
 
@@ -199,22 +210,16 @@ export class ItemsService {
       throw new UnauthorizedException('Access denied');
     }
 
-    // @ts-expect-error: assignee is not a valid property, but can exist, and should be removed
-    const { assignee, ...updateData } = updateListItemDto;
-    if (assignee) {
-      console.warn('Property `assignee` should not be sent back to the server');
-    }
-
     // Update list item
     const updatedItem = await this.prisma.listItem.update({
       where: { listItemId },
-      data: updateData,
+      data: this.sanitizeListItemUpdate(updateListItemDto),
     });
 
-    const list = await this.listsService.getListData(updateListItemDto.listId);
+    const list = await this.listsService.getListData(listItem.listId);
 
     // Send the updated list to all subscribers
-    this.events.emitListUpdate(updateListItemDto.listId, 'updated', list);
+    this.events.emitListUpdate(listItem.listId, 'updated', list);
 
     return updatedItem;
   }
@@ -247,21 +252,28 @@ export class ItemsService {
       return [];
     }
 
-    // Get the first item to find the list
-    const firstItem = await this.prisma.listItem.findUnique({
-      where: { listItemId: updates[0].listItemId },
+    // Find the lists of all the items to update
+    const listItemIds = [...new Set(updates.map((u) => u.listItemId))];
+    const listItems = await this.prisma.listItem.findMany({
+      where: { listItemId: { in: listItemIds } },
       select: { listId: true },
     });
 
-    if (!firstItem) {
+    if (listItems.length !== listItemIds.length) {
       throw new NotFoundException('List item not found');
     }
+
+    const listIds = new Set(listItems.map((li) => li.listId));
+    if (listIds.size !== 1) {
+      throw new BadRequestException('All items must belong to the same list');
+    }
+    const [listId] = listIds;
 
     // Check if user has access to the list
     const userList = await this.prisma.userList.findFirst({
       where: {
         uid: user.uid,
-        listId: firstItem.listId,
+        listId,
       },
     });
 
@@ -271,26 +283,43 @@ export class ItemsService {
 
     // Update all items in a transaction
     const updatedItems = await this.prisma.$transaction(
-      updates.map((update) => {
-        // @ts-expect-error: assignee is not a valid property, but can exist, and should be removed
-        const { assignee, ...updateData } = update.data;
-        if (assignee) {
-          console.warn(
-            'Property `assignee` should not be sent back to the server',
-          );
-        }
-
-        return this.prisma.listItem.update({
+      updates.map((update) =>
+        this.prisma.listItem.update({
           where: { listItemId: update.listItemId },
-          data: updateData,
-        });
-      }),
+          data: this.sanitizeListItemUpdate(update.data),
+        }),
+      ),
     );
 
     // Send only one update for the list
-    const list = await this.listsService.getListData(firstItem.listId);
-    this.events.emitListUpdate(firstItem.listId, 'updated', list);
+    const list = await this.listsService.getListData(listId);
+    this.events.emitListUpdate(listId, 'updated', list);
 
     return updatedItems;
+  }
+
+  /**
+   * Removes the properties the client is not allowed to change,
+   * so a list item can't be moved to another list or re-keyed
+   *
+   * @param {object} data  list item data from the client
+   * @returns {object}  data safe to pass to the update
+   */
+  private sanitizeListItemUpdate(
+    data: Partial<ListItem>,
+  ): Prisma.ListItemUncheckedUpdateInput {
+    // @ts-expect-error: assignee is not a valid property, but can exist, and should be removed
+    const { assignee, ...updateData } = data;
+    if (assignee) {
+      console.warn('Property `assignee` should not be sent back to the server');
+    }
+    // undefined values are ignored by Prisma
+    return {
+      ...updateData,
+      listItemId: undefined,
+      listId: undefined,
+      itemId: undefined,
+      createdAt: undefined,
+    };
   }
 }

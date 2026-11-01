@@ -104,6 +104,30 @@ export class UpdatesGateway
     console.log('Client association:', this.clientToAuth, this.authToClients);
   }
 
+  private listRoom(listId: string) {
+    return `list:${listId}`;
+  }
+
+  /**
+   * Subscribes all the connected clients of the user to the list updates
+   */
+  private joinListRoom(auth: string, listId: string) {
+    const clients = this.authToClients.get(auth);
+    if (clients?.size) {
+      this.server.in([...clients]).socketsJoin(this.listRoom(listId));
+    }
+  }
+
+  /**
+   * Unsubscribes all the connected clients of the user from the list updates
+   */
+  private leaveListRoom(auth: string, listId: string) {
+    const clients = this.authToClients.get(auth);
+    if (clients?.size) {
+      this.server.in([...clients]).socketsLeave(this.listRoom(listId));
+    }
+  }
+
   private async registerClient(client: Socket, message: ClientMessage) {
     const clientId: string = client.id;
     const { uid, auth, names, expo_push_token } = message;
@@ -145,6 +169,9 @@ export class UpdatesGateway
     const clientId: string = client.id;
     this.storeClientAssociation(clientId, auth as string);
 
+    // Subscribe to the updates of the user's lists only
+    await client.join(userData.lists.map((list) => this.listRoom(list.listId)));
+
     // Send initial data
     client.emit('auth', { userData });
   }
@@ -165,6 +192,7 @@ export class UpdatesGateway
         auth,
         message as CreateListDto,
       );
+      this.joinListRoom(auth, newList.listId);
       this.broadcastListUpdate(newList.listId, 'created', newList);
     } catch (error) {
       console.log('Failed to handle list creation:', error.message);
@@ -235,6 +263,7 @@ export class UpdatesGateway
     const shareId: string = message.shareId;
     try {
       const joinedList = await this.listsService.joinList(auth, shareId);
+      this.joinListRoom(auth, joinedList.listId);
       // update the lists of the client
       client.emit('list:join', { joinedList });
       // send the new data to all the list clients
@@ -263,6 +292,7 @@ export class UpdatesGateway
     try {
       const leftList = await this.listsService.leaveList(auth, listId);
       this.broadcastListUpdate(listId, 'left', leftList);
+      this.leaveListRoom(auth, listId);
     } catch (error) {
       console.log('Failed to handle list leave:', error.message);
       client.emit('error', {
@@ -279,8 +309,10 @@ export class UpdatesGateway
   }
 
   private broadcastListUpdate(listId: string, action: string, data: any) {
-    // Send the list update to all the clients subscribed to it
-    this.server.emit(`list:${listId}`, { action, data });
+    // Send the list update only to the clients of the list members
+    this.server
+      .to(this.listRoom(listId))
+      .emit(`list:${listId}`, { action, data });
   }
 
   @SubscribeMessage('item:create')

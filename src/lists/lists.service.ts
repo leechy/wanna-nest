@@ -64,9 +64,10 @@ export class ListsService {
       );
     }
 
-    const updatedList = this.prisma.list.update({
+    const updatedList = await this.prisma.list.update({
       where: { listId },
-      data: updateListData,
+      // the list can't be re-keyed by the client (undefined is ignored by Prisma)
+      data: { ...updateListData, listId: undefined },
     });
 
     // update user's list data data
@@ -118,11 +119,18 @@ export class ListsService {
       throw new UnauthorizedException('Missing auth token');
     }
 
-    const userList = await this.getListData(listId);
+    const membership = await this.prisma.userList.findFirst({
+      where: {
+        listId,
+        user: { auth },
+      },
+    });
 
-    if (!userList) {
+    if (!membership) {
       throw new UnauthorizedException('Access denied');
     }
+
+    const userList = await this.getListData(listId);
 
     // Notify connected clients
     this.events.emitListUpdate(listId, 'updated', userList);
