@@ -259,23 +259,14 @@ export class ItemsService {
       data.sessionId = null;
     }
 
-    // found it after all
+    // found it after all; the note and the reply stay as the history
     if ((putInCart || bought) && current.unavailable) {
       data.unavailable = false;
-      data.unavailableAt = null;
-      data.unavailableNote = null;
-      data.unavailableReply = null;
     }
 
     if (markedUnavailable) {
       data.ongoing = false;
       data.unavailableAt = now;
-      data.unavailableReply = null;
-    }
-
-    if (update.unavailable === false && current.unavailable) {
-      data.unavailableAt = null;
-      data.unavailableNote = null;
       data.unavailableReply = null;
     }
 

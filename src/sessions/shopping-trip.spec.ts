@@ -93,18 +93,27 @@ describe('Shopping trip', () => {
     );
   });
 
-  it('remembers when the item was marked out of stock and forgets it when found', async () => {
+  it('keeps the out of stock note and reply when the item is found after all', async () => {
     const milk = await addItem('andrey', 'Milk');
 
     const marked = await app.items.updateListItem('masha', milk.listItemId, {
       unavailable: true,
+      unavailableNote: 'only 3.2%',
     });
     expect(marked.unavailableAt).toBeInstanceOf(Date);
-
-    const found = await app.items.updateListItem('masha', milk.listItemId, {
-      unavailable: false,
+    await app.items.updateListItem('andrey', milk.listItemId, {
+      unavailableReply: 'take it',
     });
-    expect(found.unavailableAt).toBeNull();
+
+    const picked = await app.items.updateListItem('masha', milk.listItemId, {
+      ongoing: true,
+    });
+    expect(picked).toMatchObject({
+      unavailable: false,
+      unavailableNote: 'only 3.2%',
+      unavailableReply: 'take it',
+      unavailableAt: marked.unavailableAt,
+    });
   });
 
   it('respects the per list notification settings', async () => {
