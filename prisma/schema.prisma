@@ -117,6 +117,7 @@ model ListItem {
 
   // shopper couldn't find the item, the author can reply with a hint
   unavailable              Boolean   @default(false)
+  unavailableAt            DateTime?
   unavailableNote          String?
   unavailableReply         String?
 

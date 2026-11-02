@@ -93,6 +93,20 @@ describe('Shopping trip', () => {
     );
   });
 
+  it('remembers when the item was marked out of stock and forgets it when found', async () => {
+    const milk = await addItem('andrey', 'Milk');
+
+    const marked = await app.items.updateListItem('masha', milk.listItemId, {
+      unavailable: true,
+    });
+    expect(marked.unavailableAt).toBeInstanceOf(Date);
+
+    const found = await app.items.updateListItem('masha', milk.listItemId, {
+      unavailable: false,
+    });
+    expect(found.unavailableAt).toBeNull();
+  });
+
   it('respects the per list notification settings', async () => {
     await app.lists.update('andrey', listId, {
       notifyOnItemStateUpdate: false,
