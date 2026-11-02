@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListsService } from '../lists/lists.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { AuthMessage, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Injectable()
 export class UsersService {
@@ -33,6 +33,43 @@ export class UsersService {
       }
       throw new BadRequestException('Failed to create user');
     }
+  }
+
+  /**
+   * Signs the user in, registering them first when the token is new
+   * and the message has the profile. Safe to repeat: the app sends it
+   * on every connection and the sign-up may race with the sign-in.
+   *
+   * @param {AuthMessage} message  auth token, and uid + names to sign up
+   */
+  async signIn(message: AuthMessage) {
+    const existing = await this.prisma.user.findUnique({
+      where: { auth: message.auth },
+    });
+
+    if (!existing) {
+      if (!message.uid || !message.names) {
+        throw new NotFoundException('User not found');
+      }
+      try {
+        await this.create({
+          uid: message.uid,
+          auth: message.auth,
+          names: message.names,
+          expo_push_token: message.expo_push_token,
+        });
+      } catch (error) {
+        // created by the parallel message in the meantime
+        const created = await this.prisma.user.findUnique({
+          where: { auth: message.auth },
+        });
+        if (!created) {
+          throw error;
+        }
+      }
+    }
+
+    return this.findByAuth(message.auth);
   }
 
   async update(auth: string, updateUserDto: UpdateUserDto) {

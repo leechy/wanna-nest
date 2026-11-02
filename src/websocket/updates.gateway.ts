@@ -77,26 +77,8 @@ export class UpdatesGateway implements OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() message: AuthMessage,
   ) {
-    if (message.names) {
-      // new user
-      const { uid, auth, names, expo_push_token } = message;
-      if (!uid) {
-        throw new WsException('Missing user id');
-      }
-      const newUser = await this.usersService.create({
-        uid,
-        auth,
-        names,
-        expo_push_token,
-      });
-      this.storeClientAssociation(client.id, auth);
-      client.emit('auth', {
-        newUser: { uid: newUser.uid, names: newUser.names },
-      });
-      return;
-    }
-
-    const userData = await this.usersService.findByAuth(message.auth);
+    // signs up on the first time, the app sends uid + names every time
+    const userData = await this.usersService.signIn(message);
     this.storeClientAssociation(client.id, message.auth);
 
     // Subscribe to the updates of the user's lists only
