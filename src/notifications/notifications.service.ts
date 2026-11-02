@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_BATCH_SIZE = 100;
@@ -24,7 +25,10 @@ export interface ExpoPushMessage extends PushMessage {
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private analytics: AnalyticsService,
+  ) {}
 
   /**
    * Sends a push notification to the list members,
@@ -66,6 +70,14 @@ export class NotificationsService {
       ...message,
       data: { listId, ...message.data },
     }));
+
+    if (messages.length > 0) {
+      await this.analytics.track(
+        'push.sent',
+        { listId },
+        { preference, recipients: messages.length, ...message.data },
+      );
+    }
 
     await this.send(messages);
   }

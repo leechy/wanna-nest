@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateListDto, UpdateListDto } from './dto/list.dto';
 import { EventsService } from '../events/events.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 const listDataSelect = {
   listId: true,
@@ -82,6 +83,7 @@ export class ListsService {
     private prisma: PrismaService,
     private events: EventsService,
     private notifications: NotificationsService,
+    private analytics: AnalyticsService,
   ) {}
 
   /**
@@ -173,6 +175,12 @@ export class ListsService {
       return list.listId;
     });
 
+    await this.analytics.track(
+      'list.created',
+      { uid: user.uid, listId },
+      { cartMode: listData.cartMode ?? 'cart' },
+    );
+
     return this.getUserListData(listId, user.uid);
   }
 
@@ -187,10 +195,23 @@ export class ListsService {
       ...updateListData
     } = updateListDto;
 
+    const before = await this.prisma.list.findUnique({ where: { listId } });
+
     await this.prisma.list.update({
       where: { listId },
       data: updateListData,
     });
+
+    if (
+      updateListData.cartMode &&
+      updateListData.cartMode !== before?.cartMode
+    ) {
+      await this.analytics.track(
+        'list.cart_mode_changed',
+        { uid: user.uid, listId },
+        { from: before?.cartMode, to: updateListData.cartMode },
+      );
+    }
 
     // update user's own list settings
     await this.prisma.userList.update({
@@ -327,6 +348,12 @@ export class ListsService {
         update: { deleted: false },
       });
 
+      await this.analytics.track(
+        'list.joined',
+        { uid: user.uid, listId: list.listId },
+        { rejoined: Boolean(existing) },
+      );
+
       const otherMembers = (await this.getMemberIds(list.listId)).filter(
         (uid) => uid !== user.uid,
       );
@@ -358,6 +385,8 @@ export class ListsService {
       },
       data: { deleted: true },
     });
+
+    await this.analytics.track('list.left', { uid: user.uid, listId });
 
     await this.broadcastList(listId);
 

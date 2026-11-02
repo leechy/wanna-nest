@@ -8,6 +8,7 @@ import { ShoppingSession, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListsService } from '../lists/lists.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 // session ends after the list wasn't on the shopper's screen for so long
 export const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -24,6 +25,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private prisma: PrismaService,
     private listsService: ListsService,
     private notifications: NotificationsService,
+    private analytics: AnalyticsService,
   ) {}
 
   onModuleInit() {
@@ -88,6 +90,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     });
 
     const list = await this.prisma.list.findUnique({ where: { listId } });
+    await this.analytics.track(
+      'session.started',
+      { uid: user.uid, listId, sessionId: session.sessionId },
+      { cartMode: list?.cartMode },
+      now,
+    );
+
     const otherMembers = (await this.listsService.getMemberIds(listId)).filter(
       (uid) => uid !== user.uid,
     );
@@ -153,13 +162,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * @param {SessionEndReason} reason  why the session ended
    */
   async end(sessionId: string, reason: SessionEndReason, now = new Date()) {
-    const session = await this.prisma.$transaction(async (tx) => {
+    const { session, bought } = await this.prisma.$transaction(async (tx) => {
       const session = await tx.shoppingSession.update({
         where: { sessionId },
         data: { endedAt: now, endReason: reason },
+        include: { shoppers: { select: { uid: true } } },
       });
 
-      await tx.listItem.updateMany({
+      const { count: bought } = await tx.listItem.updateMany({
         where: {
           sessionId,
           ongoing: true,
@@ -169,8 +179,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         data: { ongoing: false, completed: true, completedAt: now },
       });
 
-      return session;
+      return { session, bought };
     });
+
+    await this.analytics.track(
+      'session.ended',
+      { listId: session.listId, sessionId },
+      {
+        reason,
+        durationSec: Math.round(
+          (now.getTime() - session.startedAt.getTime()) / 1000,
+        ),
+        shoppers: session.shoppers.map((s) => s.uid),
+        // items left in the cart and bought by the session end
+        cartBought: bought,
+      },
+      now,
+    );
 
     await this.listsService.broadcastList(session.listId);
   }

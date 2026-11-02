@@ -27,6 +27,8 @@ import {
 } from '../lists/dto/list.dto';
 import { AuthMessage, UpdateUserDto } from '../users/dto/user.dto';
 import { WsErrorFilter } from './ws-error.filter';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { TrackMessage } from '../analytics/dto/analytics.dto';
 
 @WebSocketGateway({
   cors: {
@@ -54,6 +56,7 @@ export class UpdatesGateway implements OnGatewayDisconnect {
     private listsService: ListsService,
     private itemsService: ItemsService,
     private sessionsService: SessionsService,
+    private analytics: AnalyticsService,
   ) {}
 
   handleDisconnect(client: Socket) {
@@ -236,6 +239,17 @@ export class UpdatesGateway implements OnGatewayDisconnect {
       message.listId,
     );
     client.emit('session:end', { listId: message.listId });
+  }
+
+  // app-side events: screens, push taps; fire and forget, no reply
+  @SubscribeMessage('analytics:track')
+  async handleAnalyticsTrack(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: TrackMessage,
+  ) {
+    const user = await this.listsService.requireUser(this.requireAuth(client));
+    const { type, props, ...context } = message;
+    await this.analytics.trackClient(user.uid, type, context, props);
   }
 
   @OnEvent('list.update')

@@ -165,3 +165,20 @@ model SessionShopper {
 
   @@id([sessionId, uid])
 }
+
+// Append-only product analytics log, no relations so it outlives the data.
+// Only meaningful actions go here (no heartbeats), old rows are purged.
+model AnalyticsEvent {
+  id                       Int       @id @default(autoincrement())
+  // "session.started", "item.added", "client.push_opened", ...
+  type                     String
+  uid                      String?
+  listId                   String?
+  sessionId                String?
+  // small JSON object with the event details
+  props                    String?
+  createdAt                DateTime  @default(now())
+
+  @@index([createdAt])
+  @@index([listId, createdAt])
+}

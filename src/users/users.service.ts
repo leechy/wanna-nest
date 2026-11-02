@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListsService } from '../lists/lists.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Injectable()
@@ -14,13 +15,16 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private listsService: ListsService,
+    private analytics: AnalyticsService,
   ) {}
 
   async create(createUserDto: CreateUserDto) {
     try {
-      return await this.prisma.user.create({
+      const user = await this.prisma.user.create({
         data: createUserDto,
       });
+      await this.analytics.track('user.registered', { uid: user.uid });
+      return user;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {

@@ -10,30 +10,49 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build application
-        run: npm run build
-
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Test
+        run: npm test
+
+      - name: Build application
+        run: npm run build
+
+      # dependencies are installed on the server, so the Prisma engine
+      # matches the server platform
       - name: Create deployment package
         run: |
-          mkdir -p deployment
-          cp -r dist package.json package-lock.json prisma deployment/
-          cd deployment && npm ci --production
+          mkdir -p deployment/prisma
+          cp -r dist package.json package-lock.json deployment/
+          cp -r prisma/schema.prisma prisma/migrations deployment/prisma/
+
+      # scp doesn't delete files, old builds and migrations must go first
+      # (the database prisma/dev.db stays)
+      - name: Clean previous build
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          port: ${{ secrets.PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /var/www/wanna-nest/prisma
+            rm -rf /var/www/wanna-nest/dist /var/www/wanna-nest/prisma/migrations
 
       - name: Deploy to Digital Ocean
-        uses: appleboy/scp-action@master
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
@@ -43,14 +62,20 @@ jobs:
           target: '/var/www/wanna-nest'
           strip_components: 1
 
-      - name: Restart application
-        uses: appleboy/ssh-action@master
+      - name: Install and restart application
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           port: ${{ secrets.PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
+            # node from nvm is not on the PATH of a non-interactive shell
+            [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh"
             cd /var/www/wanna-nest
+            npm ci --omit=dev
+            npx prisma generate
             npx prisma migrate deploy
-            pm2 restart wanna-nest || pm2 start dist/main.js --name wanna-nest
+            pm2 restart wanna-nest --update-env || pm2 start dist/main.js --name wanna-nest
+            pm2 save

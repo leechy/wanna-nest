@@ -7,6 +7,7 @@ import { EventsService } from '../events/events.service';
 import { ListsService } from '../lists/lists.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { ItemsService } from '../items/items.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import {
   ExpoPushMessage,
   NotificationsService,
@@ -51,10 +52,17 @@ export async function createTestApp() {
   const events = {
     emitListUpdate: jest.fn(),
   } as unknown as EventsService;
-  const notifications = new FakeNotificationsService(prisma);
-  const lists = new ListsService(prisma, events, notifications);
-  const sessions = new SessionsService(prisma, lists, notifications);
-  const items = new ItemsService(prisma, lists, sessions, notifications);
+  const analytics = new AnalyticsService(prisma);
+  const notifications = new FakeNotificationsService(prisma, analytics);
+  const lists = new ListsService(prisma, events, notifications, analytics);
+  const sessions = new SessionsService(prisma, lists, notifications, analytics);
+  const items = new ItemsService(
+    prisma,
+    lists,
+    sessions,
+    notifications,
+    analytics,
+  );
 
   /**
    * Creates a user with a push token, auth token is the user name
@@ -77,6 +85,7 @@ export async function createTestApp() {
   return {
     prisma,
     events,
+    analytics,
     notifications,
     lists,
     sessions,

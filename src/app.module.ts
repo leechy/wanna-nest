@@ -13,6 +13,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventsService } from './events/events.service';
 import { SessionsService } from './sessions/sessions.service';
 import { NotificationsService } from './notifications/notifications.service';
+import { AnalyticsService } from './analytics/analytics.service';
 
 @Module({
   imports: [EventEmitterModule.forRoot()],
@@ -32,6 +33,7 @@ import { NotificationsService } from './notifications/notifications.service';
     EventsService,
     SessionsService,
     NotificationsService,
+    AnalyticsService,
   ],
 })
 export class AppModule {}

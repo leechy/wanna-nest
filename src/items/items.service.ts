@@ -9,6 +9,7 @@ import { CreateItemDto, UpdateListItemDto } from './dto/item.dto';
 import { ListsService } from '../lists/lists.service';
 import { SessionsService } from '../sessions/sessions.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 @Injectable()
 export class ItemsService {
@@ -17,6 +18,7 @@ export class ItemsService {
     private listsService: ListsService,
     private sessions: SessionsService,
     private notifications: NotificationsService,
+    private analytics: AnalyticsService,
   ) {}
 
   /**
@@ -78,7 +80,7 @@ export class ItemsService {
       },
     });
 
-    await this.notifyShoppersAboutNewItem(user, listItem);
+    await this.announceNewItem(user, listItem);
     await this.listsService.broadcastList(listId);
 
     return listItem;
@@ -123,7 +125,7 @@ export class ItemsService {
       },
     });
 
-    await this.notifyShoppersAboutNewItem(user, listItem);
+    await this.announceNewItem(user, listItem);
     await this.listsService.broadcastList(listId);
 
     return listItem;
@@ -283,11 +285,37 @@ export class ItemsService {
       await this.notifyAuthorAboutUnavailable(user, updated);
     }
 
-    if (
-      update.unavailableReply &&
-      update.unavailableReply !== current.unavailableReply
-    ) {
+    const replied =
+      Boolean(update.unavailableReply) &&
+      update.unavailableReply !== current.unavailableReply;
+    if (replied) {
       await this.notifyShoppersAboutReply(user, updated);
+    }
+
+    const event = itemEventType(current, update, {
+      putInCart,
+      bought,
+      markedUnavailable,
+      replied,
+    });
+    if (event) {
+      await this.analytics.track(
+        event,
+        {
+          uid: user.uid,
+          listId: current.listId,
+          sessionId: updated.sessionId ?? current.sessionId,
+        },
+        {
+          listItemId: current.listItemId,
+          ...(markedUnavailable && {
+            hasNote: Boolean(updated.unavailableNote),
+          }),
+          ...((putInCart || bought) &&
+            current.unavailable && { wasUnavailable: true }),
+        },
+        now,
+      );
     }
 
     return updated;
@@ -304,10 +332,20 @@ export class ItemsService {
   /**
    * Somebody is in the store right now — they should know about the new item
    */
-  private async notifyShoppersAboutNewItem(user: User, listItem: ListItem) {
+  private async announceNewItem(user: User, listItem: ListItem) {
     const shoppers = (
       await this.sessions.getActiveShopperIds(listItem.listId)
     ).filter((uid) => uid !== user.uid);
+
+    await this.analytics.track(
+      'item.added',
+      { uid: user.uid, listId: listItem.listId },
+      {
+        listItemId: listItem.listItemId,
+        // the main metric: added while somebody else is in the store
+        duringOthersSession: shoppers.length > 0,
+      },
+    );
 
     if (shoppers.length === 0) {
       return;
@@ -364,4 +402,27 @@ export class ItemsService {
       },
     );
   }
+}
+
+/**
+ * The analytics event for the list item change, one per update
+ */
+function itemEventType(
+  current: ListItem,
+  update: UpdateListItemDto,
+  changes: {
+    putInCart: boolean;
+    bought: boolean;
+    markedUnavailable: boolean;
+    replied: boolean;
+  },
+): string | null {
+  if (changes.putInCart) return 'item.picked';
+  if (changes.bought) return 'item.bought';
+  if (changes.markedUnavailable) return 'item.unavailable';
+  if (changes.replied) return 'item.unavailable_replied';
+  if (update.completed === false && current.completed) return 'item.unbought';
+  if (update.ongoing === false && current.ongoing) return 'item.unpicked';
+  if (update.deleted === true && !current.deleted) return 'item.deleted';
+  return null;
 }

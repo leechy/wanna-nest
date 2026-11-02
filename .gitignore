@@ -398,3 +398,7 @@ Temporary Items
 dist
 .webpack
 .serverless/**/*.zip
+
+# Local SQLite database
+prisma/dev.db
+prisma/dev.db-journal
