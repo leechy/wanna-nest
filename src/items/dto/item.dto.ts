@@ -35,8 +35,10 @@ export class CreateItemDto {
   @IsOptional()
   units?: string;
 
+  // the app keeps quantities as strings
   @IsNumber()
   @IsOptional()
+  @Type(() => Number)
   quantity?: number;
 
   @IsDate()
@@ -65,8 +67,10 @@ export class UpdateListItemDto {
   @IsOptional()
   units?: string;
 
+  // the app keeps quantities as strings
   @IsNumber()
   @IsOptional()
+  @Type(() => Number)
   quantity?: number;
 
   @IsDate()
