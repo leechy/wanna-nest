@@ -1,10 +1,12 @@
 import {
+  IsArray,
   IsBoolean,
   IsDate,
-  IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -33,7 +35,7 @@ export class CreateItemDto {
   @IsOptional()
   units?: string;
 
-  @IsInt()
+  @IsNumber()
   @IsOptional()
   quantity?: number;
 
@@ -44,21 +46,12 @@ export class CreateItemDto {
 
   @IsBoolean()
   @IsOptional()
-  ongoing?: boolean;
-
-  @IsString()
-  @IsOptional()
-  assigneeId?: string;
-
-  @IsString()
-  @IsOptional()
-  assignee?: string;
-
-  @IsBoolean()
-  @IsOptional()
   public?: boolean;
 }
 
+/**
+ * The only list item properties a member can change
+ */
 export class UpdateListItemDto {
   @IsString()
   @IsOptional()
@@ -72,7 +65,7 @@ export class UpdateListItemDto {
   @IsOptional()
   units?: string;
 
-  @IsInt()
+  @IsNumber()
   @IsOptional()
   quantity?: number;
 
@@ -89,24 +82,52 @@ export class UpdateListItemDto {
   @IsOptional()
   assigneeId?: string;
 
-  @IsString()
-  @IsOptional()
-  assignee?: string;
-
   @IsBoolean()
   @IsOptional()
   completed?: boolean;
 
-  @IsDate()
+  @IsBoolean()
   @IsOptional()
-  @Type(() => Date)
-  completedAt?: Date;
+  unavailable?: boolean;
 
-  @IsInt()
+  @IsString()
+  @IsOptional()
+  unavailableNote?: string;
+
+  @IsString()
+  @IsOptional()
+  unavailableReply?: string;
+
+  @IsNumber()
   @IsOptional()
   sortOrder?: number;
 
   @IsBoolean()
   @IsOptional()
   deleted?: boolean;
+}
+
+// WebSocket messages
+
+export class UpdateListItemMessage extends UpdateListItemDto {
+  @IsString()
+  @IsNotEmpty()
+  listItemId: string;
+}
+
+export class ListItemBatchUpdate {
+  @IsString()
+  @IsNotEmpty()
+  listItemId: string;
+
+  @ValidateNested()
+  @Type(() => UpdateListItemDto)
+  data: UpdateListItemDto;
+}
+
+export class BatchUpdateListItemsMessage {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ListItemBatchUpdate)
+  updates: ListItemBatchUpdate[];
 }

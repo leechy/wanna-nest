@@ -2,22 +2,31 @@ import {
   WebSocketGateway,
   WebSocketServer,
   SubscribeMessage,
-  OnGatewayConnection,
   OnGatewayDisconnect,
   MessageBody,
   ConnectedSocket,
-  OnGatewayInit,
+  WsException,
 } from '@nestjs/websockets';
+import { UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
 import { type Server, type Socket } from 'socket.io';
+import { OnEvent } from '@nestjs/event-emitter';
 import { UsersService } from '../users/users.service';
 import { ListsService } from '../lists/lists.service';
-import { ItemsService } from 'src/items/items.service';
-import { OnEvent } from '@nestjs/event-emitter';
-import { CreateItemDto } from 'src/items/dto/item.dto';
-import { ListItem } from '@prisma/client';
-import { CreateListDto } from 'src/lists/dto/list.dto';
-
-type ClientMessage = any;
+import { ItemsService } from '../items/items.service';
+import { SessionsService } from '../sessions/sessions.service';
+import {
+  BatchUpdateListItemsMessage,
+  CreateItemDto,
+  UpdateListItemMessage,
+} from '../items/dto/item.dto';
+import {
+  CreateListDto,
+  ListIdMessage,
+  ShareIdMessage,
+  UpdateListMessage,
+} from '../lists/dto/list.dto';
+import { AuthMessage, UpdateUserDto } from '../users/dto/user.dto';
+import { WsErrorFilter } from './ws-error.filter';
 
 @WebSocketGateway({
   cors: {
@@ -30,9 +39,10 @@ type ClientMessage = any;
   transports: ['polling', 'websocket'],
   allowEIO3: true,
 })
-export class UpdatesGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
-{
+// unknown properties are dropped silently, older clients send more than needed
+@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+@UseFilters(new WsErrorFilter())
+export class UpdatesGateway implements OnGatewayDisconnect {
   @WebSocketServer()
   private server: Server;
 
@@ -43,56 +53,213 @@ export class UpdatesGateway
     private usersService: UsersService,
     private listsService: ListsService,
     private itemsService: ItemsService,
+    private sessionsService: SessionsService,
   ) {}
-
-  afterInit(server: Server) {
-    console.log('Initialized!', server);
-  }
-
-  handleConnection(client: Socket) {
-    client.emit('message', {
-      data: 'Hello from server',
-    });
-    console.log('Client connected:', client.id);
-  }
 
   handleDisconnect(client: Socket) {
     const clientId: string = client.id;
-    if (clientId) {
-      const auth = this.clientToAuth.get(clientId);
-      if (auth) {
-        const clients = this.authToClients.get(auth);
-        clients?.delete(clientId);
-        if (clients?.size === 0) {
-          this.authToClients.delete(auth);
-        }
+    const auth = this.clientToAuth.get(clientId);
+    if (auth) {
+      const clients = this.authToClients.get(auth);
+      clients?.delete(clientId);
+      if (clients?.size === 0) {
+        this.authToClients.delete(auth);
       }
-      this.clientToAuth.delete(clientId);
     }
+    this.clientToAuth.delete(clientId);
   }
 
   @SubscribeMessage('auth')
   async handleAuth(
     @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
+    @MessageBody() message: AuthMessage,
   ) {
-    console.log('Received auth:', this.server, client.id, message);
-    client.emit('message', { name: 'received', message });
-
-    try {
-      if (message.auth && !message.names) {
-        await this.authenticateClient(client, message);
-      } else {
-        await this.registerClient(client, message);
+    if (message.names) {
+      // new user
+      const { uid, auth, names, expo_push_token } = message;
+      if (!uid) {
+        throw new WsException('Missing user id');
       }
-
-      // Add other message handlers...
-    } catch (error) {
-      client.emit('error', {
-        event: 'auth',
-        error: error.message,
+      const newUser = await this.usersService.create({
+        uid,
+        auth,
+        names,
+        expo_push_token,
       });
+      this.storeClientAssociation(client.id, auth);
+      client.emit('auth', {
+        newUser: { uid: newUser.uid, names: newUser.names },
+      });
+      return;
     }
+
+    const userData = await this.usersService.findByAuth(message.auth);
+    this.storeClientAssociation(client.id, message.auth);
+
+    // Subscribe to the updates of the user's lists only
+    await client.join(userData.lists.map((list) => this.listRoom(list.listId)));
+
+    // Send initial data
+    client.emit('auth', { userData });
+  }
+
+  @SubscribeMessage('user:update')
+  async handleUserUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: UpdateUserDto,
+  ) {
+    const user = await this.usersService.update(
+      this.requireAuth(client),
+      message,
+    );
+    client.emit('user:update', { user });
+  }
+
+  @SubscribeMessage('list:create')
+  async handleListCreateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: CreateListDto,
+  ) {
+    const auth = this.requireAuth(client);
+    const newList = await this.listsService.create(auth, message);
+    this.joinListRoom(auth, newList.listId);
+    this.broadcastListUpdate(newList.listId, 'created', newList);
+  }
+
+  @SubscribeMessage('list:update')
+  async handleListUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: UpdateListMessage,
+  ) {
+    const { listId, ...update } = message;
+    // the list members get the update from the service
+    await this.listsService.update(this.requireAuth(client), listId, update);
+  }
+
+  @SubscribeMessage('list:view')
+  async handleListViewMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ShareIdMessage,
+  ) {
+    const listData = await this.listsService.findByShareId(message.shareId);
+    client.emit('list:view', { listData });
+  }
+
+  @SubscribeMessage('list:join')
+  async handleListJoinMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ShareIdMessage,
+  ) {
+    const auth = this.requireAuth(client);
+    const joinedList = await this.listsService.joinList(auth, message.shareId);
+    this.joinListRoom(auth, joinedList.listId);
+    client.emit('list:join', { joinedList });
+  }
+
+  @SubscribeMessage('list:leave')
+  async handleListLeaveMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ListIdMessage,
+  ) {
+    const auth = this.requireAuth(client);
+    await this.listsService.leaveList(auth, message.listId);
+    this.leaveListRoom(auth, message.listId);
+    client.emit('list:leave', { listId: message.listId });
+  }
+
+  @SubscribeMessage('item:create')
+  async handleItemCreateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: CreateItemDto,
+  ) {
+    const result = await this.itemsService.createItem(
+      this.requireAuth(client),
+      message,
+    );
+    client.emit('item:create', { result });
+  }
+
+  // the older name of the listItem:update
+  @SubscribeMessage('item:update')
+  async handleItemUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: UpdateListItemMessage,
+  ) {
+    await this.updateListItem(client, message);
+    client.emit('item:update', { success: true });
+  }
+
+  @SubscribeMessage('listItem:update')
+  async handleListItemUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: UpdateListItemMessage,
+  ) {
+    await this.updateListItem(client, message);
+    client.emit('listItem:update', { success: true });
+  }
+
+  @SubscribeMessage('listItems:updateBatch')
+  async handleListItemsBatchUpdateMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: BatchUpdateListItemsMessage,
+  ) {
+    const result = await this.itemsService.updateMultipleListItems(
+      this.requireAuth(client),
+      message.updates,
+    );
+    client.emit('listItems:updateBatch', {
+      success: true,
+      count: result.length,
+    });
+  }
+
+  // the list is on the shopper's screen
+  @SubscribeMessage('session:heartbeat')
+  async handleSessionHeartbeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ListIdMessage,
+  ) {
+    const active = await this.sessionsService.heartbeat(
+      this.requireAuth(client),
+      message.listId,
+    );
+    client.emit('session:heartbeat', { listId: message.listId, active });
+  }
+
+  @SubscribeMessage('session:end')
+  async handleSessionEnd(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: ListIdMessage,
+  ) {
+    await this.sessionsService.endByShopper(
+      this.requireAuth(client),
+      message.listId,
+    );
+    client.emit('session:end', { listId: message.listId });
+  }
+
+  @OnEvent('list.update')
+  handleListUpdate(payload: { listId: string; action: string; data: any }) {
+    const { listId, action, data } = payload;
+    this.broadcastListUpdate(listId, action, data);
+  }
+
+  private async updateListItem(client: Socket, message: UpdateListItemMessage) {
+    const { listItemId, ...update } = message;
+    // the list members get the update from the service
+    await this.itemsService.updateListItem(
+      this.requireAuth(client),
+      listItemId,
+      update,
+    );
+  }
+
+  private requireAuth(client: Socket): string {
+    const auth = this.clientToAuth.get(client.id);
+    if (!auth) {
+      throw new WsException('Not authenticated');
+    }
+    return auth;
   }
 
   private storeClientAssociation(clientId: string, auth: string) {
@@ -101,7 +268,6 @@ export class UpdatesGateway
       this.authToClients.set(auth, new Set());
     }
     this.authToClients.get(auth)?.add(clientId);
-    console.log('Client association:', this.clientToAuth, this.authToClients);
   }
 
   private listRoom(listId: string) {
@@ -128,339 +294,10 @@ export class UpdatesGateway
     }
   }
 
-  private async registerClient(client: Socket, message: ClientMessage) {
-    const clientId: string = client.id;
-    const { uid, auth, names, expo_push_token } = message;
-    console.log('Registering client:', clientId, uid, auth, names);
-    const newUser = await this.usersService
-      .create({
-        uid,
-        auth,
-        names,
-        expo_push_token,
-      })
-      .catch((error) => {
-        console.log('Failed to create user:', error);
-        client.emit('error', {
-          event: 'auth',
-          error: error.message,
-        });
-        throw error;
-      });
-
-    // Store client association
-    this.storeClientAssociation(clientId, (auth || newUser.auth) as string);
-
-    client.emit('auth', { newUser });
-  }
-
-  private async authenticateClient(client: Socket, message: ClientMessage) {
-    // Check if auth token is valid
-    const { auth } = message;
-    if (!auth) {
-      throw new Error('Missing auth token');
-    }
-
-    const userData = await this.usersService.findByAuth(auth as string);
-    if (!userData) {
-      throw new Error('Invalid auth token');
-    }
-
-    const clientId: string = client.id;
-    this.storeClientAssociation(clientId, auth as string);
-
-    // Subscribe to the updates of the user's lists only
-    await client.join(userData.lists.map((list) => this.listRoom(list.listId)));
-
-    // Send initial data
-    client.emit('auth', { userData });
-  }
-
-  @SubscribeMessage('list:create')
-  async handleListCreateMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    try {
-      const newList = await this.listsService.create(
-        auth,
-        message as CreateListDto,
-      );
-      this.joinListRoom(auth, newList.listId);
-      this.broadcastListUpdate(newList.listId, 'created', newList);
-    } catch (error) {
-      console.log('Failed to handle list creation:', error.message);
-      client.emit('error', {
-        event: 'list:create',
-        error: error.message,
-      });
-    }
-  }
-
-  @SubscribeMessage('list:update')
-  async handleListUpdateMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    const listId: string = message.listId;
-    try {
-      const updatedList = await this.listsService.update(
-        auth,
-        listId,
-        message as CreateListDto,
-      );
-      this.broadcastListUpdate(updatedList.listId, 'updated', updatedList);
-    } catch (error) {
-      console.log('Failed to handle list update:', error.message);
-      client.emit('error', {
-        event: 'list:update',
-        error: error.message,
-      });
-    }
-  }
-
-  @SubscribeMessage('list:view')
-  async handleListViewMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const listId: string = message.listId;
-    try {
-      const listData = await this.listsService.findByShareId(listId);
-      client.emit('list:view', { listData });
-    } catch (error) {
-      console.log('Failed to handle list view:', error.message);
-      client.emit('error', {
-        event: 'list:view',
-        error: error.message,
-      });
-    }
-  }
-
-  @SubscribeMessage('list:join')
-  async handleListJoinMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    const shareId: string = message.shareId;
-    try {
-      const joinedList = await this.listsService.joinList(auth, shareId);
-      this.joinListRoom(auth, joinedList.listId);
-      // update the lists of the client
-      client.emit('list:join', { joinedList });
-      // send the new data to all the list clients
-      this.broadcastListUpdate(joinedList.listId, 'joined', joinedList);
-    } catch (error) {
-      console.log('Failed to handle list join:', error.message);
-      client.emit('error', {
-        event: 'list:join',
-        error: error.message,
-      });
-    }
-  }
-
-  @SubscribeMessage('list:leave')
-  async handleListLeaveMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    const listId: string = message.listId;
-    try {
-      const leftList = await this.listsService.leaveList(auth, listId);
-      this.broadcastListUpdate(listId, 'left', leftList);
-      this.leaveListRoom(auth, listId);
-    } catch (error) {
-      console.log('Failed to handle list leave:', error.message);
-      client.emit('error', {
-        event: 'list:leave',
-        error: error.message,
-      });
-    }
-  }
-
-  @OnEvent('list.update')
-  handleListUpdate(payload: { listId: string; action: string; data: any }) {
-    const { listId, action, data } = payload;
-    this.broadcastListUpdate(listId, action, data);
-  }
-
   private broadcastListUpdate(listId: string, action: string, data: any) {
     // Send the list update only to the clients of the list members
     this.server
       .to(this.listRoom(listId))
       .emit(`list:${listId}`, { action, data });
-  }
-
-  @SubscribeMessage('item:create')
-  async handleItemCreateMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    try {
-      const { listId, ...itemData } = message;
-
-      // Create item and get updated list
-      const result = await this.itemsService.createItem(auth, {
-        ...itemData,
-        listId,
-      } as CreateItemDto);
-
-      // Broadcast the entire updated list to all subscribers
-      if (listId && typeof listId === 'string') {
-        const updatedList = await this.listsService.findById(auth, listId);
-        this.broadcastListUpdate(listId, 'itemCreated', updatedList);
-      }
-
-      // Send acknowledgment to the client
-      client.emit('item:create', { result });
-    } catch (error) {
-      console.log('Failed to handle item creation:', error.message);
-      client.emit('error', {
-        event: 'item:create',
-        error: error.message,
-      });
-    }
-  }
-
-  @SubscribeMessage('item:update')
-  async handleItemUpdateMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    try {
-      const { listId, listItemId, ...updateData } = message;
-
-      // Update item
-      await this.itemsService.updateListItem(
-        auth,
-        listItemId as string,
-        updateData as Partial<ListItem>,
-      );
-
-      // Get and broadcast the entire updated list
-      if (listId && typeof listId === 'string') {
-        const updatedList = await this.listsService.findById(auth, listId);
-        this.broadcastListUpdate(listId, 'itemUpdated', updatedList);
-      }
-
-      // Send acknowledgment to the client
-      client.emit('item:update', { success: true });
-    } catch (error) {
-      console.log('Failed to handle item update:', error.message);
-      client.emit('error', {
-        event: 'item:update',
-        error: error.message,
-      });
-    }
-  }
-
-  @SubscribeMessage('listItem:update')
-  async handleListItemUpdateMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() message: ClientMessage,
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    try {
-      const { listId, listItemId, ...updateData } = message;
-
-      // Update list item
-      if (
-        listId &&
-        typeof listId === 'string' &&
-        listItemId &&
-        typeof listItemId === 'string'
-      ) {
-        await this.itemsService.updateListItem(
-          auth,
-          listItemId,
-          updateData as Partial<ListItem>,
-        );
-
-        // Get and broadcast the entire updated list
-        const updatedList = await this.listsService.findById(auth, listId);
-        this.broadcastListUpdate(listId, 'itemUpdated', updatedList);
-      }
-
-      // Send acknowledgment to the client
-      client.emit('listItem:update', { success: true });
-    } catch (error) {
-      console.log('Failed to handle list item update:', error.message);
-      client.emit('error', {
-        event: 'listItem:update',
-        error: error.message,
-      });
-    }
-  }
-
-  @SubscribeMessage('listItems:updateBatch')
-  async handleListItemsBatchUpdateMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody()
-    message: { updates: Array<{ listItemId: string; data: any }> },
-  ) {
-    const clientId: string = client.id;
-    const auth = this.clientToAuth.get(clientId);
-    if (!auth) {
-      throw new Error('Not authenticated');
-    }
-
-    try {
-      const result = await this.itemsService.updateMultipleListItems(
-        auth,
-        message.updates,
-      );
-
-      client.emit('listItems:updateBatch', {
-        success: true,
-        count: result.length,
-      });
-    } catch (error) {
-      console.log('Failed to handle batch list item update:', error.message);
-      client.emit('error', {
-        event: 'listItems:updateBatch',
-        error: error.message,
-      });
-    }
   }
 }

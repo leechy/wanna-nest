@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -17,11 +11,12 @@ model User {
   uid                      String    @id @default(uuid())
   names                    String
 
-  auth                     String
+  auth                     String    @unique
 
   expo_push_token          String?
   device_push_token        String?
 
+  // global notification settings, per list ones are in UserList
   notifyOnListShared       Boolean   @default(true)
   notifyOnListItemsUpdate  Boolean   @default(true)
   notifyOnItemStateUpdate  Boolean   @default(true)
@@ -31,14 +26,20 @@ model User {
   updatedAt                DateTime  @updatedAt
 
   lists                    UserList[]
-  assignations             ListItem[]
+  assignations             ListItem[] @relation("assignee")
+  addedItems               ListItem[] @relation("addedBy")
+  shoppingTrips            SessionShopper[]
 }
 
 model List {
   listId                   String    @id @default(uuid())
-  shareId                  String    @default(uuid())
+  shareId                  String    @unique @default(uuid())
   name                     String
   type                     String    @default("project")
+
+  // "cart": items go to the cart first and are bought when the session ends
+  // "direct": items are bought right away
+  cartMode                 String    @default("cart")
 
   deadline                 DateTime?
 
@@ -47,16 +48,13 @@ model List {
   completedAt              DateTime?
   hideCompleted            Boolean   @default(false)
 
-  notifyOnListShared       Boolean   @default(true)
-  notifyOnListItemsUpdate  Boolean   @default(true)
-  notifyOnItemStateUpdate  Boolean   @default(true)
-
   deleted                  Boolean   @default(false)
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
   users                    UserList[]
   listItems                ListItem[]
+  sessions                 ShoppingSession[]
 }
 
 model Item {
@@ -108,15 +106,62 @@ model ListItem {
   quantity                 Decimal   @default(1.0)
   deadline                 DateTime?
 
+  addedBy                  User?     @relation("addedBy", fields: [addedById], references: [uid])
+  addedById                String?
+
   ongoing                  Boolean   @default(false)
-  assignee                 User?     @relation(fields: [assigneeId], references: [uid])
+  assignee                 User?     @relation("assignee", fields: [assigneeId], references: [uid])
   assigneeId               String?
   completed                Boolean   @default(false)
   completedAt              DateTime?
+
+  // shopper couldn't find the item, the author can reply with a hint
+  unavailable              Boolean   @default(false)
+  unavailableNote          String?
+  unavailableReply         String?
+
+  // the shopping session the item was put in the cart / bought in
+  session                  ShoppingSession? @relation(fields: [sessionId], references: [sessionId])
+  sessionId                String?
 
   sortOrder                Int?
 
   deleted                  Boolean   @default(false)
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
+
+  @@index([listId])
+}
+
+model ShoppingSession {
+  sessionId                String    @id @default(uuid())
+  list                     List      @relation(fields: [listId], references: [listId])
+  listId                   String
+
+  startedAt                DateTime  @default(now())
+  endedAt                  DateTime?
+  // "timeout" | "manual" | "geofence"
+  endReason                String?
+
+  // where the session started, for the store geofence later
+  latitude                 Float?
+  longitude                Float?
+
+  shoppers                 SessionShopper[]
+  listItems                ListItem[]
+
+  @@index([listId, endedAt])
+}
+
+model SessionShopper {
+  session                  ShoppingSession @relation(fields: [sessionId], references: [sessionId])
+  sessionId                String
+  user                     User      @relation(fields: [uid], references: [uid])
+  uid                      String
+
+  joinedAt                 DateTime  @default(now())
+  // last time the list was on the shopper's screen, extends the timeout
+  lastSeenAt               DateTime  @default(now())
+
+  @@id([sessionId, uid])
 }

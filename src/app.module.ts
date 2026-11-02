@@ -11,6 +11,8 @@ import { PrismaService } from './prisma/prisma.service';
 import { UpdatesGateway } from './websocket/updates.gateway';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventsService } from './events/events.service';
+import { SessionsService } from './sessions/sessions.service';
+import { NotificationsService } from './notifications/notifications.service';
 
 @Module({
   imports: [EventEmitterModule.forRoot()],
@@ -28,6 +30,8 @@ import { EventsService } from './events/events.service';
     PrismaService,
     UpdatesGateway,
     EventsService,
+    SessionsService,
+    NotificationsService,
   ],
 })
 export class AppModule {}

@@ -22,6 +22,27 @@ export class CreateUserDto {
   device_push_token?: string;
 }
 
+/**
+ * WebSocket auth: only `auth` to sign in, all the fields to sign up
+ */
+export class AuthMessage {
+  @IsString()
+  @IsNotEmpty({ message: 'Auth token is required' })
+  auth: string;
+
+  @IsString()
+  @IsOptional()
+  uid?: string;
+
+  @IsString()
+  @IsOptional()
+  names?: string;
+
+  @IsString()
+  @IsOptional()
+  expo_push_token?: string;
+}
+
 export class UpdateUserDto {
   @IsString()
   @IsOptional()

@@ -5,9 +5,11 @@ import {
   IsNotEmpty,
   IsBoolean,
   IsNumber,
-  IsArray,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export const CART_MODES = ['cart', 'direct'] as const;
 
 export class CreateListDto {
   @IsString()
@@ -26,10 +28,18 @@ export class CreateListDto {
   @IsOptional()
   type?: string;
 
+  @IsIn(CART_MODES)
+  @IsOptional()
+  cartMode?: (typeof CART_MODES)[number];
+
   @IsDate()
   @IsOptional()
   @Type(() => Date)
   deadline?: Date;
+
+  @IsBoolean()
+  @IsOptional()
+  hideCompleted?: boolean;
 
   @IsBoolean()
   @IsOptional()
@@ -53,10 +63,18 @@ export class UpdateListDto {
   @IsOptional()
   type?: string;
 
+  @IsIn(CART_MODES)
+  @IsOptional()
+  cartMode?: (typeof CART_MODES)[number];
+
   @IsDate()
   @IsOptional()
   @Type(() => Date)
   deadline?: Date;
+
+  @IsBoolean()
+  @IsOptional()
+  hideCompleted?: boolean;
 
   @IsBoolean()
   @IsOptional()
@@ -66,6 +84,12 @@ export class UpdateListDto {
   @IsOptional()
   @Type(() => Date)
   completedAt?: Date;
+
+  @IsBoolean()
+  @IsOptional()
+  deleted?: boolean;
+
+  // user's own list settings
 
   @IsNumber()
   @IsOptional()
@@ -82,23 +106,24 @@ export class UpdateListDto {
   @IsBoolean()
   @IsOptional()
   notifyOnItemStateUpdate?: boolean;
+}
 
-  @IsDate()
-  @IsOptional()
-  @Type(() => Date)
-  updatedAt?: Date;
+// WebSocket messages
 
-  @IsBoolean()
-  @IsOptional()
-  deleted?: boolean;
+export class UpdateListMessage extends UpdateListDto {
+  @IsString()
+  @IsNotEmpty()
+  listId: string;
+}
 
-  // not welcomed properties
-  // that can be sent by the client
-  @IsArray()
-  @IsOptional()
-  users?: any;
+export class ListIdMessage {
+  @IsString()
+  @IsNotEmpty()
+  listId: string;
+}
 
-  @IsArray()
-  @IsOptional()
-  listItems?: any;
+export class ShareIdMessage {
+  @IsString()
+  @IsNotEmpty()
+  shareId: string;
 }

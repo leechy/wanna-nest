@@ -2,21 +2,21 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
+import { Item, ListItem, Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { EventsService } from 'src/events/events.service';
-import { CreateItemDto } from './dto/item.dto';
-import { filterModelProperties } from 'src/utils/model-utils';
-import { Item, ListItem, Prisma } from '@prisma/client';
-import { ListsService } from 'src/lists/lists.service';
+import { CreateItemDto, UpdateListItemDto } from './dto/item.dto';
+import { ListsService } from '../lists/lists.service';
+import { SessionsService } from '../sessions/sessions.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ItemsService {
   constructor(
     private prisma: PrismaService,
-    private events: EventsService,
     private listsService: ListsService,
+    private sessions: SessionsService,
+    private notifications: NotificationsService,
   ) {}
 
   /**
@@ -34,71 +34,54 @@ export class ItemsService {
   }
 
   /**
-   * Creates new item AND list item
+   * Creates new list item, and the item in the catalog if needed
    *
    * @param {string} auth  auth token
    * @param {object} createItemDto  item data
-   * @returns {Item}  newly created item
+   * @returns {ListItem}  newly created list item
    */
-  async createItem(auth: string, createItemDto: CreateItemDto): Promise<Item> {
-    if (!auth) {
-      throw new UnauthorizedException('Missing auth token');
+  async createItem(
+    auth: string,
+    createItemDto: CreateItemDto,
+  ): Promise<ListItem> {
+    const { listId } = createItemDto;
+    const user = await this.listsService.requireMember(auth, listId);
+
+    let item: Item | null = null;
+    if (createItemDto.itemId) {
+      item = await this.prisma.item.findUnique({
+        where: { itemId: createItemDto.itemId },
+      });
+    }
+    if (!item) {
+      item = await this.prisma.item.create({
+        data: {
+          itemId: createItemDto.itemId,
+          name: createItemDto.name,
+          type: createItemDto.type,
+          units: createItemDto.units,
+        },
+      });
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: { auth },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Invalid auth token');
-    }
-
-    // Check if user has access to the list
-    const userList = await this.prisma.userList.findFirst({
-      where: {
-        uid: user.uid,
-        listId: createItemDto.listId,
+    const listItem = await this.prisma.listItem.create({
+      data: {
+        listItemId: createItemDto.listItemId,
+        listId,
+        itemId: item.itemId,
+        name: createItemDto.name,
+        type: createItemDto.type,
+        units: createItemDto.units,
+        quantity: createItemDto.quantity,
+        deadline: createItemDto.deadline,
+        addedById: user.uid,
       },
     });
 
-    if (!userList) {
-      throw new UnauthorizedException('Access denied');
-    }
+    await this.notifyShoppersAboutNewItem(user, listItem);
+    await this.listsService.broadcastList(listId);
 
-    // check if item already exists
-    let item: Prisma.$ItemPayload['scalars'] | null = null;
-    if (createItemDto.itemId) {
-      item = await this.prisma.item.findFirst({
-        where: {
-          itemId: createItemDto.itemId,
-        },
-      });
-
-      if (!item) {
-        // If item does not exist, create a new item
-        const itemData = filterModelProperties(createItemDto, 'Item');
-        console.log('itemData', itemData);
-        item = await this.prisma.item.create({
-          // @ts-expect-error: Prisma type error is possible
-          data: itemData,
-        });
-      }
-    }
-
-    // If listId is provided, create a list item too
-    if (createItemDto.listId) {
-      const listItemData = filterModelProperties(createItemDto, 'ListItem');
-      console.log('listItemData', listItemData);
-      await this.prisma.listItem.create({
-        // @ts-expect-error: Prisma type error is possible
-        data: {
-          ...listItemData,
-          itemId: item.itemId,
-        },
-      });
-    }
-
-    return item;
+    return listItem;
   }
 
   /**
@@ -115,35 +98,13 @@ export class ItemsService {
     listId: string,
     itemId: string,
   ): Promise<ListItem> {
-    if (!auth) {
-      throw new UnauthorizedException('Missing auth token');
-    }
+    const user = await this.listsService.requireMember(auth, listId);
 
-    const user = await this.prisma.user.findFirst({
-      where: { auth },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Invalid auth token');
-    }
-
-    // Check if user has access to the list
-    const userList = await this.prisma.userList.findFirst({
-      where: {
-        uid: user.uid,
-        listId,
-      },
-    });
-
-    if (!userList) {
-      throw new UnauthorizedException('Access denied');
-    }
-
-    // Check if item exists
     const item = await this.prisma.item.findFirst({
       where: {
         itemId,
-        OR: [{ public: true, deleted: false }],
+        public: true,
+        deleted: false,
       },
     });
 
@@ -151,16 +112,21 @@ export class ItemsService {
       throw new NotFoundException('Item not found');
     }
 
-    // Create list item
-    return this.prisma.listItem.create({
+    const listItem = await this.prisma.listItem.create({
       data: {
         itemId,
         listId,
         name: item.name,
         type: item.type,
         units: item.units,
+        addedById: user.uid,
       },
     });
+
+    await this.notifyShoppersAboutNewItem(user, listItem);
+    await this.listsService.broadcastList(listId);
+
+    return listItem;
   }
 
   /**
@@ -174,52 +140,26 @@ export class ItemsService {
   async updateListItem(
     auth: string,
     listItemId: string,
-    updateListItemDto: Partial<ListItem>,
+    updateListItemDto: UpdateListItemDto,
   ): Promise<ListItem> {
-    if (!auth) {
-      throw new UnauthorizedException('Missing auth token');
-    }
-
-    const user = await this.prisma.user.findFirst({
-      where: { auth },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Invalid auth token');
-    }
-
-    // Take the list from the stored list item, never from the client data
     const listItem = await this.prisma.listItem.findUnique({
       where: { listItemId },
-      select: { listId: true },
     });
 
     if (!listItem) {
       throw new NotFoundException('List item not found');
     }
 
-    // Check if user has access to the list
-    const userList = await this.prisma.userList.findFirst({
-      where: {
-        uid: user.uid,
-        listId: listItem.listId,
-      },
-    });
+    // the list is taken from the stored list item, never from the client
+    const user = await this.listsService.requireMember(auth, listItem.listId);
 
-    if (!userList) {
-      throw new UnauthorizedException('Access denied');
-    }
+    const updatedItem = await this.applyUpdate(
+      user,
+      listItem,
+      updateListItemDto,
+    );
 
-    // Update list item
-    const updatedItem = await this.prisma.listItem.update({
-      where: { listItemId },
-      data: this.sanitizeListItemUpdate(updateListItemDto),
-    });
-
-    const list = await this.listsService.getListData(listItem.listId);
-
-    // Send the updated list to all subscribers
-    this.events.emitListUpdate(listItem.listId, 'updated', list);
+    await this.listsService.broadcastList(listItem.listId);
 
     return updatedItem;
   }
@@ -228,35 +168,20 @@ export class ItemsService {
    * Update multiple list items at once
    *
    * @param {string} auth auth token
-   * @param {Array<{listItemId: string, data: Partial<ListItem>}>} updates array of updates
+   * @param {Array<{listItemId: string, data: UpdateListItemDto}>} updates array of updates
    * @returns {Promise<ListItem[]>} array of updated items
    */
   async updateMultipleListItems(
     auth: string,
-    updates: Array<{ listItemId: string; data: Partial<ListItem> }>,
+    updates: Array<{ listItemId: string; data: UpdateListItemDto }>,
   ): Promise<ListItem[]> {
-    if (!auth) {
-      throw new UnauthorizedException('Missing auth token');
-    }
-
-    const user = await this.prisma.user.findFirst({
-      where: { auth },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Invalid auth token');
-    }
-
-    // All updates must be for the same list to work properly
     if (updates.length === 0) {
       return [];
     }
 
-    // Find the lists of all the items to update
     const listItemIds = [...new Set(updates.map((u) => u.listItemId))];
     const listItems = await this.prisma.listItem.findMany({
       where: { listItemId: { in: listItemIds } },
-      select: { listId: true },
     });
 
     if (listItems.length !== listItemIds.length) {
@@ -269,57 +194,174 @@ export class ItemsService {
     }
     const [listId] = listIds;
 
-    // Check if user has access to the list
-    const userList = await this.prisma.userList.findFirst({
-      where: {
-        uid: user.uid,
-        listId,
-      },
-    });
+    const user = await this.listsService.requireMember(auth, listId);
 
-    if (!userList) {
-      throw new UnauthorizedException('Access denied');
+    const byId = new Map(listItems.map((li) => [li.listItemId, li]));
+    const updatedItems: ListItem[] = [];
+    for (const update of updates) {
+      const current = byId.get(update.listItemId);
+      const updated = await this.applyUpdate(user, current, update.data);
+      byId.set(updated.listItemId, updated);
+      updatedItems.push(updated);
     }
 
-    // Update all items in a transaction
-    const updatedItems = await this.prisma.$transaction(
-      updates.map((update) =>
-        this.prisma.listItem.update({
-          where: { listItemId: update.listItemId },
-          data: this.sanitizeListItemUpdate(update.data),
-        }),
-      ),
-    );
-
     // Send only one update for the list
-    const list = await this.listsService.getListData(listId);
-    this.events.emitListUpdate(listId, 'updated', list);
+    await this.listsService.broadcastList(listId);
 
     return updatedItems;
   }
 
   /**
-   * Removes the properties the client is not allowed to change,
-   * so a list item can't be moved to another list or re-keyed
+   * Applies the member's changes to the list item,
+   * tracking the shopping session and notifying about the item state
    *
-   * @param {object} data  list item data from the client
-   * @returns {object}  data safe to pass to the update
+   * @param {User} user  member making the change
+   * @param {ListItem} current  list item before the change
+   * @param {UpdateListItemDto} update  changes
+   * @returns {ListItem}  updated list item
    */
-  private sanitizeListItemUpdate(
-    data: Partial<ListItem>,
-  ): Prisma.ListItemUncheckedUpdateInput {
-    // @ts-expect-error: assignee is not a valid property, but can exist, and should be removed
-    const { assignee, ...updateData } = data;
-    if (assignee) {
-      console.warn('Property `assignee` should not be sent back to the server');
+  private async applyUpdate(
+    user: User,
+    current: ListItem,
+    update: UpdateListItemDto,
+    now = new Date(),
+  ): Promise<ListItem> {
+    const data: Prisma.ListItemUncheckedUpdateInput = { ...update };
+
+    const putInCart = update.ongoing === true && !current.ongoing;
+    const bought = update.completed === true && !current.completed;
+    const markedUnavailable =
+      update.unavailable === true && !current.unavailable;
+
+    // any of these means the user is in the store right now
+    if (putInCart || bought || markedUnavailable) {
+      const session = await this.sessions.startOrContinue(
+        user,
+        current.listId,
+        now,
+      );
+      data.sessionId = session.sessionId;
     }
-    // undefined values are ignored by Prisma
-    return {
-      ...updateData,
-      listItemId: undefined,
-      listId: undefined,
-      itemId: undefined,
-      createdAt: undefined,
-    };
+
+    if (bought) {
+      data.completedAt = now;
+      data.ongoing = false;
+    }
+
+    if (update.completed === false && current.completed) {
+      data.completedAt = null;
+      data.sessionId = null;
+    }
+
+    if (update.ongoing === false && current.ongoing && !bought) {
+      data.sessionId = null;
+    }
+
+    // found it after all
+    if ((putInCart || bought) && current.unavailable) {
+      data.unavailable = false;
+      data.unavailableNote = null;
+      data.unavailableReply = null;
+    }
+
+    if (markedUnavailable) {
+      data.ongoing = false;
+      data.unavailableReply = null;
+    }
+
+    if (update.unavailable === false && current.unavailable) {
+      data.unavailableNote = null;
+      data.unavailableReply = null;
+    }
+
+    const updated = await this.prisma.listItem.update({
+      where: { listItemId: current.listItemId },
+      data,
+    });
+
+    if (markedUnavailable) {
+      await this.notifyAuthorAboutUnavailable(user, updated);
+    }
+
+    if (
+      update.unavailableReply &&
+      update.unavailableReply !== current.unavailableReply
+    ) {
+      await this.notifyShoppersAboutReply(user, updated);
+    }
+
+    return updated;
+  }
+
+  private async getListName(listId: string): Promise<string> {
+    const list = await this.prisma.list.findUnique({
+      where: { listId },
+      select: { name: true },
+    });
+    return list?.name ?? '';
+  }
+
+  /**
+   * Somebody is in the store right now — they should know about the new item
+   */
+  private async notifyShoppersAboutNewItem(user: User, listItem: ListItem) {
+    const shoppers = (
+      await this.sessions.getActiveShopperIds(listItem.listId)
+    ).filter((uid) => uid !== user.uid);
+
+    if (shoppers.length === 0) {
+      return;
+    }
+
+    await this.notifications.notifyListMembers(
+      listItem.listId,
+      shoppers,
+      'notifyOnListItemsUpdate',
+      {
+        title: await this.getListName(listItem.listId),
+        body: `${user.names} added: ${listItem.name}`,
+        data: { listItemId: listItem.listItemId },
+      },
+    );
+  }
+
+  /**
+   * The author of the item can tell the shopper what to buy instead
+   */
+  private async notifyAuthorAboutUnavailable(user: User, listItem: ListItem) {
+    if (!listItem.addedById || listItem.addedById === user.uid) {
+      return;
+    }
+
+    const note = listItem.unavailableNote
+      ? ` (${listItem.unavailableNote})`
+      : '';
+    await this.notifications.notifyListMembers(
+      listItem.listId,
+      [listItem.addedById],
+      'notifyOnItemStateUpdate',
+      {
+        title: await this.getListName(listItem.listId),
+        body: `${user.names} can't find ${listItem.name}${note}`,
+        data: { listItemId: listItem.listItemId, action: 'unavailable' },
+      },
+    );
+  }
+
+  private async notifyShoppersAboutReply(user: User, listItem: ListItem) {
+    const shoppers = (
+      await this.sessions.getActiveShopperIds(listItem.listId)
+    ).filter((uid) => uid !== user.uid);
+
+    await this.notifications.notifyListMembers(
+      listItem.listId,
+      shoppers,
+      'notifyOnItemStateUpdate',
+      {
+        title: listItem.name,
+        body: `${user.names}: ${listItem.unavailableReply}`,
+        data: { listItemId: listItem.listItemId, action: 'reply' },
+      },
+    );
   }
 }

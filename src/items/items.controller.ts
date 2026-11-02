@@ -6,10 +6,10 @@ import {
   Body,
   Param,
   Headers,
+  ParseArrayPipe,
 } from '@nestjs/common';
 import { ItemsService } from './items.service';
-import { CreateItemDto } from './dto/item.dto';
-import { ListItem } from '@prisma/client';
+import { CreateItemDto, ListItemBatchUpdate } from './dto/item.dto';
 
 @Controller('items')
 export class ItemsController {
@@ -40,7 +40,8 @@ export class ItemsController {
   @Put('batch')
   updateMultiple(
     @Headers('authorization') auth: string,
-    @Body() updates: Array<{ listItemId: string; data: Partial<ListItem> }>,
+    @Body(new ParseArrayPipe({ items: ListItemBatchUpdate }))
+    updates: ListItemBatchUpdate[],
   ) {
     return this.itemsService.updateMultipleListItems(auth, updates);
   }
