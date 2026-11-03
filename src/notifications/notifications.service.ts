@@ -83,6 +83,44 @@ export class NotificationsService {
   }
 
   /**
+   * Sends a push notification to one user, respecting their global setting,
+   * for the things that are not about a list they are in, like an invitation
+   *
+   * @param {string} uid  user to notify
+   * @param {NotificationPreference} preference  setting that allows this kind of notification
+   * @param {PushMessage} message  notification content
+   */
+  async notifyUser(
+    uid: string,
+    preference: NotificationPreference,
+    message: PushMessage,
+  ): Promise<void> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        uid,
+        deleted: false,
+        [preference]: true,
+        expo_push_token: { not: null },
+      },
+      select: { expo_push_token: true },
+    });
+
+    if (!user?.expo_push_token) {
+      return;
+    }
+
+    await this.analytics.track(
+      'push.sent',
+      { uid },
+      { preference, recipients: 1, ...message.data },
+    );
+
+    await this.send([
+      { to: user.expo_push_token, sound: 'default', ...message },
+    ]);
+  }
+
+  /**
    * Sends the messages to the Expo push service
    * never throws, notifications are best effort
    */

@@ -21,6 +21,7 @@ import {
 } from '../items/dto/item.dto';
 import {
   CreateListDto,
+  InviteMessage,
   ListIdMessage,
   ShareIdMessage,
   UpdateListMessage,
@@ -139,6 +140,24 @@ export class UpdatesGateway implements OnGatewayDisconnect {
     const joinedList = await this.listsService.joinList(auth, message.shareId);
     this.joinListRoom(auth, joinedList.listId);
     client.emit('list:join', { joinedList });
+  }
+
+  @SubscribeMessage('list:invite')
+  async handleListInviteMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() message: InviteMessage,
+  ) {
+    const { inviteeAuth, invitation } = await this.listsService.inviteToList(
+      this.requireAuth(client),
+      message.listId,
+      message.uid,
+    );
+
+    // the invitee is not in the list room, the invitation goes to their devices
+    const clients = this.authToClients.get(inviteeAuth);
+    if (clients?.size) {
+      this.server.to([...clients]).emit('invitation', { invitation });
+    }
   }
 
   @SubscribeMessage('list:leave')

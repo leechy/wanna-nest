@@ -122,6 +122,16 @@ export class ListIdMessage {
   listId: string;
 }
 
+export class InviteMessage {
+  @IsString()
+  @IsNotEmpty()
+  listId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  uid: string;
+}
+
 export class ShareIdMessage {
   @IsString()
   @IsNotEmpty()

@@ -129,6 +129,7 @@ export class UsersService {
           this.listsService.getUserListData(listId, user.uid),
         ),
       ),
+      invitations: await this.listsService.getInvitations(user.uid),
     };
   }
 }

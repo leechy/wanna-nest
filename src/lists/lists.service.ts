@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -72,6 +73,12 @@ const listDataSelect = {
           user: { select: { uid: true, names: true } },
         },
       },
+    },
+  },
+  // invited and not joined yet
+  invitations: {
+    select: {
+      user: { select: { uid: true, names: true } },
     },
   },
   createdAt: true,
@@ -278,6 +285,7 @@ export class ListsService {
     return {
       ...list,
       users: list.users.map((u) => u.user),
+      invited: list.invitations.map((i) => i.user),
       listItems: list.listItems.map((li) => ({
         ...li,
         assignee: li.assignee?.names || null,
@@ -341,6 +349,11 @@ export class ListsService {
       where: { uid_listId: { uid: user.uid, listId: list.listId } },
     });
 
+    // an invitation is not needed any more, whichever way the user came
+    await this.prisma.listInvitation.deleteMany({
+      where: { uid: user.uid, listId: list.listId },
+    });
+
     // joining twice by the same link is fine
     if (!existing || existing.deleted) {
       await this.prisma.userList.upsert({
@@ -372,6 +385,102 @@ export class ListsService {
     await this.broadcastList(list.listId);
 
     return this.getUserListData(list.listId, user.uid);
+  }
+
+  /**
+   * Invites someone the user already shares another list with,
+   * so the list can't be pushed on strangers by their id
+   *
+   * @param {string} auth  inviting member
+   * @param {string} listId  list id
+   * @param {string} uid  invited user id
+   * @returns the invitation for the invitee and the invitee auth to deliver it
+   */
+  async inviteToList(auth: string, listId: string, uid: string) {
+    const user = await this.requireMember(auth, listId);
+
+    if (uid === user.uid) {
+      throw new BadRequestException('You are in the list already');
+    }
+
+    const invitee = await this.prisma.user.findUnique({ where: { uid } });
+    if (!invitee || invitee.deleted) {
+      throw new NotFoundException('User not found');
+    }
+
+    const membership = await this.prisma.userList.findUnique({
+      where: { uid_listId: { uid, listId } },
+    });
+    if (membership && !membership.deleted) {
+      throw new BadRequestException('Already in the list');
+    }
+
+    const sharedList = await this.prisma.userList.findFirst({
+      where: {
+        uid,
+        deleted: false,
+        list: {
+          deleted: false,
+          users: { some: { uid: user.uid, deleted: false } },
+        },
+      },
+    });
+    if (!sharedList) {
+      throw new UnauthorizedException('Access denied');
+    }
+
+    await this.prisma.listInvitation.upsert({
+      where: { uid_listId: { uid, listId } },
+      create: { uid, listId, invitedById: user.uid },
+      update: { invitedById: user.uid },
+    });
+
+    await this.analytics.track('list.invited', { uid: user.uid, listId });
+
+    const list = await this.getListData(listId);
+    await this.notifications.notifyUser(uid, 'notifyOnListShared', {
+      title: list.name,
+      body: `${user.names} invited you to the list`,
+      data: { listId, action: 'invitation' },
+    });
+
+    await this.broadcastList(listId);
+
+    return {
+      inviteeAuth: invitee.auth,
+      invitation: {
+        listId,
+        invitedBy: user.names,
+        createdAt: new Date(),
+        list,
+      },
+    };
+  }
+
+  /**
+   * The lists the user is invited to, with their data to look at before joining
+   *
+   * @param {string} uid  user id
+   */
+  async getInvitations(uid: string) {
+    const invitations = await this.prisma.listInvitation.findMany({
+      where: { uid, list: { deleted: false } },
+      select: {
+        listId: true,
+        createdAt: true,
+        invitedBy: { select: { names: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return Promise.all(
+      invitations.map(async ({ listId, createdAt, invitedBy }) => ({
+        listId,
+        invitedBy: invitedBy.names,
+        createdAt,
+        list: await this.getListData(listId),
+      })),
+    );
   }
 
   async leaveList(auth: string, listId: string) {

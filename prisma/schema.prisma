@@ -8,161 +8,179 @@ datasource db {
 }
 
 model User {
-  uid                      String    @id @default(uuid())
-  names                    String
+  uid   String @id @default(uuid())
+  names String
 
-  auth                     String    @unique
+  auth String @unique
 
-  expo_push_token          String?
-  device_push_token        String?
+  expo_push_token   String?
+  device_push_token String?
 
   // global notification settings, per list ones are in UserList
-  notifyOnListShared       Boolean   @default(true)
-  notifyOnListItemsUpdate  Boolean   @default(true)
-  notifyOnItemStateUpdate  Boolean   @default(true)
+  notifyOnListShared      Boolean @default(true)
+  notifyOnListItemsUpdate Boolean @default(true)
+  notifyOnItemStateUpdate Boolean @default(true)
 
-  deleted                  Boolean   @default(false)
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  lists                    UserList[]
-  assignations             ListItem[] @relation("assignee")
-  addedItems               ListItem[] @relation("addedBy")
-  shoppingTrips            SessionShopper[]
+  lists           UserList[]
+  assignations    ListItem[]       @relation("assignee")
+  addedItems      ListItem[]       @relation("addedBy")
+  shoppingTrips   SessionShopper[]
+  invitations     ListInvitation[] @relation("invitee")
+  sentInvitations ListInvitation[] @relation("invitedBy")
 }
 
 model List {
-  listId                   String    @id @default(uuid())
-  shareId                  String    @unique @default(uuid())
-  name                     String
-  type                     String    @default("project")
+  listId  String @id @default(uuid())
+  shareId String @unique @default(uuid())
+  name    String
+  type    String @default("project")
 
   // "cart": items go to the cart first and are bought when the session ends
   // "direct": items are bought right away
-  cartMode                 String    @default("cart")
+  cartMode String @default("cart")
 
-  deadline                 DateTime?
+  deadline DateTime?
 
-  active                   Boolean   @default(true)
-  completed                Boolean   @default(false)
-  completedAt              DateTime?
-  hideCompleted            Boolean   @default(false)
+  active        Boolean   @default(true)
+  completed     Boolean   @default(false)
+  completedAt   DateTime?
+  hideCompleted Boolean   @default(false)
 
-  deleted                  Boolean   @default(false)
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  users                    UserList[]
-  listItems                ListItem[]
-  sessions                 ShoppingSession[]
+  users       UserList[]
+  listItems   ListItem[]
+  sessions    ShoppingSession[]
+  invitations ListInvitation[]
 }
 
 model Item {
-  itemId                   String    @id @default(uuid())
-  name                     String
-  type                     String    @default("task")
-  units                    String?
+  itemId String  @id @default(uuid())
+  name   String
+  type   String  @default("task")
+  units  String?
 
-  active                   Boolean   @default(true)
-  public                   Boolean   @default(false)
+  active Boolean @default(true)
+  public Boolean @default(false)
 
-  deleted                  Boolean   @default(false)
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  listItems                ListItem[]
+  listItems ListItem[]
 }
 
 model UserList {
-  user                     User      @relation(fields: [uid], references: [uid])
-  uid                      String
-  list                     List      @relation(fields: [listId], references: [listId])
-  listId                   String
+  user   User   @relation(fields: [uid], references: [uid])
+  uid    String
+  list   List   @relation(fields: [listId], references: [listId])
+  listId String
 
-  sortOrder                Int?
-  active                   Boolean   @default(true)
+  sortOrder Int?
+  active    Boolean @default(true)
 
-  notifyOnListShared       Boolean   @default(true)
-  notifyOnListItemsUpdate  Boolean   @default(true)
-  notifyOnItemStateUpdate  Boolean   @default(true)
+  notifyOnListShared      Boolean @default(true)
+  notifyOnListItemsUpdate Boolean @default(true)
+  notifyOnItemStateUpdate Boolean @default(true)
 
-  deleted                  Boolean   @default(false)
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([uid, listId])
+}
+
+// A member invites someone they already share another list with,
+// the invitation is gone when the invitee joins the list
+model ListInvitation {
+  list        List   @relation(fields: [listId], references: [listId])
+  listId      String
+  user        User   @relation("invitee", fields: [uid], references: [uid])
+  uid         String
+  invitedBy   User   @relation("invitedBy", fields: [invitedById], references: [uid])
+  invitedById String
+
+  createdAt DateTime @default(now())
 
   @@id([uid, listId])
 }
 
 model ListItem {
-  listItemId               String    @id @default(uuid())
-  item                     Item      @relation(fields: [itemId], references: [itemId])
-  itemId                   String
-  list                     List      @relation(fields: [listId], references: [listId])
-  listId                   String
+  listItemId String @id @default(uuid())
+  item       Item   @relation(fields: [itemId], references: [itemId])
+  itemId     String
+  list       List   @relation(fields: [listId], references: [listId])
+  listId     String
 
-  name                     String
-  type                     String    @default("task")
-  units                    String?
-  quantity                 Decimal   @default(1.0)
-  deadline                 DateTime?
+  name     String
+  type     String    @default("task")
+  units    String?
+  quantity Decimal   @default(1.0)
+  deadline DateTime?
 
-  addedBy                  User?     @relation("addedBy", fields: [addedById], references: [uid])
-  addedById                String?
+  addedBy   User?   @relation("addedBy", fields: [addedById], references: [uid])
+  addedById String?
 
-  ongoing                  Boolean   @default(false)
-  assignee                 User?     @relation("assignee", fields: [assigneeId], references: [uid])
-  assigneeId               String?
-  completed                Boolean   @default(false)
-  completedAt              DateTime?
+  ongoing     Boolean   @default(false)
+  assignee    User?     @relation("assignee", fields: [assigneeId], references: [uid])
+  assigneeId  String?
+  completed   Boolean   @default(false)
+  completedAt DateTime?
 
   // shopper couldn't find the item, the author can reply with a hint
-  unavailable              Boolean   @default(false)
-  unavailableAt            DateTime?
-  unavailableNote          String?
-  unavailableReply         String?
+  unavailable      Boolean   @default(false)
+  unavailableAt    DateTime?
+  unavailableNote  String?
+  unavailableReply String?
 
   // the shopping session the item was put in the cart / bought in
-  session                  ShoppingSession? @relation(fields: [sessionId], references: [sessionId])
-  sessionId                String?
+  session   ShoppingSession? @relation(fields: [sessionId], references: [sessionId])
+  sessionId String?
 
-  sortOrder                Int?
+  sortOrder Int?
 
-  deleted                  Boolean   @default(false)
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  deleted   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([listId])
 }
 
 model ShoppingSession {
-  sessionId                String    @id @default(uuid())
-  list                     List      @relation(fields: [listId], references: [listId])
-  listId                   String
+  sessionId String @id @default(uuid())
+  list      List   @relation(fields: [listId], references: [listId])
+  listId    String
 
-  startedAt                DateTime  @default(now())
-  endedAt                  DateTime?
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
   // "timeout" | "manual" | "geofence"
-  endReason                String?
+  endReason String?
 
   // where the session started, for the store geofence later
-  latitude                 Float?
-  longitude                Float?
+  latitude  Float?
+  longitude Float?
 
-  shoppers                 SessionShopper[]
-  listItems                ListItem[]
+  shoppers  SessionShopper[]
+  listItems ListItem[]
 
   @@index([listId, endedAt])
 }
 
 model SessionShopper {
-  session                  ShoppingSession @relation(fields: [sessionId], references: [sessionId])
-  sessionId                String
-  user                     User      @relation(fields: [uid], references: [uid])
-  uid                      String
+  session   ShoppingSession @relation(fields: [sessionId], references: [sessionId])
+  sessionId String
+  user      User            @relation(fields: [uid], references: [uid])
+  uid       String
 
-  joinedAt                 DateTime  @default(now())
+  joinedAt   DateTime @default(now())
   // last time the list was on the shopper's screen, extends the timeout
-  lastSeenAt               DateTime  @default(now())
+  lastSeenAt DateTime @default(now())
 
   @@id([sessionId, uid])
 }
@@ -170,15 +188,15 @@ model SessionShopper {
 // Append-only product analytics log, no relations so it outlives the data.
 // Only meaningful actions go here (no heartbeats), old rows are purged.
 model AnalyticsEvent {
-  id                       Int       @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   // "session.started", "item.added", "client.push_opened", ...
-  type                     String
-  uid                      String?
-  listId                   String?
-  sessionId                String?
+  type      String
+  uid       String?
+  listId    String?
+  sessionId String?
   // small JSON object with the event details
-  props                    String?
-  createdAt                DateTime  @default(now())
+  props     String?
+  createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([listId, createdAt])
