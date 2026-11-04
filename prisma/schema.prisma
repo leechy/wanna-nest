@@ -138,6 +138,7 @@ model ListItem {
   unavailableAt    DateTime?
   unavailableNote  String?
   unavailableReply String?
+  unavailableReplyAt DateTime?
 
   // the shopping session the item was put in the cart / bought in
   session   ShoppingSession? @relation(fields: [sessionId], references: [sessionId])

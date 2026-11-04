@@ -101,9 +101,10 @@ describe('Shopping trip', () => {
       unavailableNote: 'only 3.2%',
     });
     expect(marked.unavailableAt).toBeInstanceOf(Date);
-    await app.items.updateListItem('andrey', milk.listItemId, {
+    const replied = await app.items.updateListItem('andrey', milk.listItemId, {
       unavailableReply: 'take it',
     });
+    expect(replied.unavailableReplyAt).toBeInstanceOf(Date);
 
     const picked = await app.items.updateListItem('masha', milk.listItemId, {
       ongoing: true,
@@ -113,6 +114,17 @@ describe('Shopping trip', () => {
       unavailableNote: 'only 3.2%',
       unavailableReply: 'take it',
       unavailableAt: marked.unavailableAt,
+      unavailableReplyAt: replied.unavailableReplyAt,
+    });
+
+    // out of stock again: a new question, the old reply is gone
+    const again = await app.items.updateListItem('masha', milk.listItemId, {
+      unavailable: true,
+    });
+    expect(again).toMatchObject({
+      unavailableNote: null,
+      unavailableReply: null,
+      unavailableReplyAt: null,
     });
   });
 

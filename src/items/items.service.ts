@@ -267,7 +267,18 @@ export class ItemsService {
     if (markedUnavailable) {
       data.ongoing = false;
       data.unavailableAt = now;
+      // a new question: the note and the reply of the last time are gone
+      data.unavailableNote = update.unavailableNote ?? null;
       data.unavailableReply = null;
+      data.unavailableReplyAt = null;
+    }
+
+    const replied =
+      Boolean(update.unavailableReply) &&
+      update.unavailableReply !== current.unavailableReply;
+    // the reply shows with its time under the shopper's note
+    if (replied) {
+      data.unavailableReplyAt = now;
     }
 
     const updated = await this.prisma.listItem.update({
@@ -279,9 +290,6 @@ export class ItemsService {
       await this.notifyAuthorAboutUnavailable(user, updated);
     }
 
-    const replied =
-      Boolean(update.unavailableReply) &&
-      update.unavailableReply !== current.unavailableReply;
     if (replied) {
       await this.notifyShoppersAboutReply(user, updated);
     }

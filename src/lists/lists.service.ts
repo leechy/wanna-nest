@@ -55,6 +55,7 @@ const listDataSelect = {
       unavailableAt: true,
       unavailableNote: true,
       unavailableReply: true,
+      unavailableReplyAt: true,
       sessionId: true,
       sortOrder: true,
       deleted: true,
